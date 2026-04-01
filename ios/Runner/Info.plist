@@ -26,6 +26,16 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Esta app necesita acceder a tu ubicacion para enviar la posicion del autobus en tiempo real.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Esta app necesita acceder a tu ubicacion incluso en segundo plano para rastrear el autobus.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Esta app necesita acceder a tu ubicacion siempre para rastreo continuo del autobus.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

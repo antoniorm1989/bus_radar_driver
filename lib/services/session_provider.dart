@@ -1,244 +1,462 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
-import '../models/driver.dart';
-import '../models/bus.dart';
-import '../models/route.dart';
-import '../services/driver_service.dart';
-import '../services/validation_service.dart';
-import '../services/location_service.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:logger/logger.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter_background/flutter_background.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:logger/logger.dart';
+
+import '../models/bus.dart';
+import '../models/driver.dart';
+import '../models/route.dart';
+import 'driver_service.dart';
+import 'foreground_service.dart';
 
 class SessionProvider extends ChangeNotifier {
-  double? speed;
-    Future<void> _disableBackground() async {
-      if (_backgroundEnabled) {
-        await FlutterBackground.disableBackgroundExecution();
-        _backgroundEnabled = false;
-      }
-    }
-  final DriverService _driverService = DriverService();
-  final ValidationService _validationService = ValidationService();
-  final LocationService _locationService = LocationService();
+  SessionProvider() {
+    FlutterForegroundTask.addTaskDataCallback(_onForegroundTaskData);
+  }
+
   final Logger _logger = Logger();
+  final DriverService _driverService = DriverService();
 
   Driver? driver;
   Bus? bus;
   RouteModel? route;
+
   bool isActive = false;
   bool isLoading = false;
   String? error;
+
   bool gpsError = false;
   bool connectionError = false;
-  bool _backgroundEnabled = false;
-  Stream<List<ConnectivityResult>>? _connectivityStream;
+
+  double? speed;
+
+  bool isSendingLocation = false;
+  String? trackingError;
+  String trackingStatus = 'off';
+  String? trackingMessage;
+  DateTime? lastSentAt;
+  DateTime? lastTrackingAt;
+
+  Timer? _trackingHealthTimer;
+  StreamSubscription<DocumentSnapshot>? _busListener;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
-  int _retryCount = 0;
-  static const int _maxRetries = 5;
-  bool _initializing = false;
+
   bool _initialized = false;
+  bool _initializing = false;
 
   Future<void> initializeSession() async {
-    if (_initialized || _initializing) {
-      _logger.w('initializeSession ignorado (ya inicializado o en proceso)');
-      return;
-    }
+    if (_initialized || _initializing) return;
     _initializing = true;
-
-    if (driver != null && bus != null && route != null) {
-      _logger.i('Sesión ya cargada, se omite inicialización');
-      _initializing = false;
-      return;
-    }
 
     isLoading = true;
     error = null;
     notifyListeners();
-    _logger.i('Inicializando sesión...');
+
     try {
+      _logger.i('[init] Iniciando sesion');
       final user = FirebaseAuth.instance.currentUser;
-      _logger.i('Usuario actual: \\${user?.uid}');
+
       if (user == null) {
         error = 'No autenticado';
-        isLoading = false;
-        notifyListeners();
-        _logger.w('No autenticado');
+        _logger.w('[init] No autenticado');
         return;
       }
+
       driver = await _driverService.getDriver(user.uid);
-      _logger.i('Driver obtenido: $driver');
       if (driver == null || !(driver?.active ?? false)) {
-        error = 'Chofer no válido o inactivo';
-        isLoading = false;
-        notifyListeners();
-        _logger.w('Chofer no válido o inactivo');
+        error = 'Chofer invalido';
+        _logger.w('[init] Chofer invalido');
         return;
       }
+
       bus = await _driverService.getAssignedBus(driver!.assignedBusRef.id);
-      isActive = bus?.active ?? false;
-      _logger.i('Bus obtenido: $bus');
       if (bus == null) {
-        error = 'Camión no válido';
-        isLoading = false;
-        notifyListeners();
-        _logger.w('Camión no válido');
+        error = 'Unidad no valida';
+        _logger.w('[init] Unidad no valida');
         return;
       }
-      if (bus!.assignedDriverRef.id != driver!.id) {
-        error = 'No eres el chofer asignado a este camión';
-        isLoading = false;
-        notifyListeners();
-        _logger.w('No eres el chofer asignado a este camión');
-        return;
-      }
-      // Validación de "bus en uso" eliminada. El chofer siempre puede entrar y prender/apagar la ruta.
+
       route = await _driverService.getRoute(bus!.routeId);
-      _logger.i('Ruta obtenida: ${route?.name}');
+      if (route == null) {
+        error = 'Ruta no valida';
+        _logger.w('[init] Ruta no valida');
+        return;
+      }
+
       _initConnectivityListener();
-      isLoading = false;
-      notifyListeners();
-      _logger.i('Sesión inicializada correctamente');
+      _listenBusRealtime();
+
+      isActive = bus?.active ?? false;
+      if (isActive) {
+        trackingStatus = 'starting';
+        trackingMessage = 'Reanudando rastreo';
+        _startTrackingHealthTimer();
+      } else {
+        trackingStatus = 'off';
+        trackingMessage = 'Servicio detenido';
+      }
+
       _initialized = true;
-      _initializing = false;
+      _logger.i('[init] Sesion inicializada');
     } catch (e, st) {
-      error = 'Error de inicialización';
-      _logger.e('Error en initializeSession: $e\n$st');
+      error = 'Error inicializando';
+      _logger.e('[init] Error inicializando: $e\n$st');
+    } finally {
       isLoading = false;
       _initializing = false;
+      checkTrackingHealth(notify: false);
       notifyListeners();
     }
   }
 
   Future<void> startService() async {
-
-    if (isActive) {
-      _logger.w('El servicio ya está activo, se ignora startService');
+    if (isLoading || isActive) return;
+    if (bus == null || driver == null || route == null) {
+      error = 'No hay unidad o ruta disponible';
+      notifyListeners();
       return;
     }
 
-    if (bus == null || driver == null) return;
-      isLoading = true;
-      error = null;
-      notifyListeners();
-      try {
-        await FirebaseFirestore.instance.collection('buses').doc(bus!.id).update({'active': true, 'lastStartedAt': FieldValue.serverTimestamp()});
-        await _enableBackground();
-        await _locationService.startLocationUpdates(
-          busId: bus!.id,
-          routeId: route!.id,
-          driverId: driver!.id,
-          onSpeedUpdate: (double newSpeed) {
-            speed = newSpeed;
-            notifyListeners();
-          },
-        );
-        isActive = true;
-        isLoading = false;
-        _retryCount = 0;
-        notifyListeners();
-      } catch (e, st) {
-        error = 'No se pudo iniciar el servicio';
-        _logger.e('Error en startService: $e\n$st');
-        isLoading = false;
-        notifyListeners();
-        _retryStartService();
+    isLoading = true;
+    error = null;
+    trackingError = null;
+    notifyListeners();
+
+    try {
+      final canStart = await _ensureTrackingPrerequisites();
+      if (!canStart) {
+        return;
       }
+
+      await FirebaseFirestore.instance.collection('buses').doc(bus!.id).set({
+        'active': true,
+        'lastStartedAt': FieldValue.serverTimestamp(),
+        'trackingStatus': 'starting',
+        'trackingMessage': 'Iniciando rastreo',
+        'trackingUpdatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      await FlutterForegroundTask.saveData(key: 'busId', value: bus!.id);
+
+      ServiceRequestResult result;
+      if (await FlutterForegroundTask.isRunningService) {
+        result = await FlutterForegroundTask.restartService();
+      } else {
+        result = await FlutterForegroundTask.startService(
+          serviceTypes: [ForegroundServiceTypes.location],
+          notificationTitle: 'Bus Radar',
+          notificationText: 'Rastreo activo de la unidad',
+          callback: startLocationTaskCallback,
+        );
+      }
+
+      if (result is ServiceRequestFailure) {
+        throw result.error;
+      }
+
+      isActive = true;
+      trackingStatus = 'starting';
+      trackingMessage = 'Rastreo activo';
+      _startTrackingHealthTimer();
+      _logger.i('[startService] Servicio iniciado');
+    } catch (e, st) {
+      error = 'Error iniciando servicio';
+      trackingError = 'No se pudo iniciar el rastreo';
+      _logger.e('[startService] Error: $e\n$st');
+    } finally {
+      isLoading = false;
+      checkTrackingHealth(notify: false);
+      notifyListeners();
+    }
   }
 
-  Future<void> stopService({String? reason}) async {
-    if (bus == null) return;
+  Future<void> stopService() async {
+    if (isLoading || bus == null) return;
+
     isLoading = true;
     error = null;
     notifyListeners();
+
     try {
-      await _locationService.stopLocationUpdates(bus!.id);
-      await FirebaseFirestore.instance.collection('buses').doc(bus!.id).update({'active': false});
-      await _disableBackground();
+      if (await FlutterForegroundTask.isRunningService) {
+        final result = await FlutterForegroundTask.stopService();
+        if (result is ServiceRequestFailure) {
+          throw result.error;
+        }
+      }
+
+      await FirebaseFirestore.instance.collection('buses').doc(bus!.id).set({
+        'active': false,
+        'speed': 0.0,
+        'trackingStatus': 'off',
+        'trackingMessage': 'Servicio detenido',
+        'trackingUpdatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
       isActive = false;
-      isLoading = false;
-      notifyListeners();
+      isSendingLocation = false;
+      trackingStatus = 'off';
+      trackingMessage = 'Servicio detenido';
+      trackingError = null;
+      lastSentAt = null;
+      lastTrackingAt = null;
+      speed = 0;
+
+      _trackingHealthTimer?.cancel();
+      _logger.i('[stopService] Servicio detenido');
     } catch (e, st) {
-      error = 'No se pudo detener el servicio';
-      _logger.e('Error en stopService: $e\n$st');
+      error = 'Error deteniendo servicio';
+      trackingError = 'No se pudo detener correctamente';
+      _logger.e('[stopService] Error: $e\n$st');
+    } finally {
       isLoading = false;
+      checkTrackingHealth(notify: false);
       notifyListeners();
-      _retryStopService();
     }
   }
 
-  void setGpsError(bool value) {
-    gpsError = value;
-    notifyListeners();
-  }
-
-  void setConnectionError(bool value) {
-    connectionError = value;
-    notifyListeners();
-  }
-
-  void clearError() {
-    error = null;
-    notifyListeners();
-  }
-
-  Future<void> _enableBackground() async {
-    if (!_backgroundEnabled) {
-      final androidConfig = const FlutterBackgroundAndroidConfig(
-        notificationTitle: 'Bus Radar Driver',
-        notificationText: 'Enviando ubicación en segundo plano',
-        notificationImportance: AndroidNotificationImportance.normal,
-        notificationIcon: AndroidResource(name: 'background_icon', defType: 'drawable'),
-      );
-      final success = await FlutterBackground.initialize(androidConfig: androidConfig);
-      if (success) {
-        await FlutterBackground.enableBackgroundExecution();
-        _backgroundEnabled = true;
-      }
+  void _listenBusRealtime() {
+    if (bus == null) {
+      return;
     }
-  }
 
-  void _initConnectivityListener() {
-    _connectivityStream ??= Connectivity().onConnectivityChanged;
-    _connectivitySubscription ??= _connectivityStream!.listen((results) {
-      final connected = results.isNotEmpty && results.first != ConnectivityResult.none;
-      setConnectionError(!connected);
-      if (connected && isActive && error != null) {
-        // Reintentar si hay error y vuelve la conexión
-        _retryStartService();
+    _busListener?.cancel();
+    _busListener = FirebaseFirestore.instance
+        .collection('buses')
+        .doc(bus!.id)
+        .snapshots()
+        .listen((doc) {
+      if (!doc.exists || doc.data() == null) {
+        return;
       }
+
+      final data = doc.data() as Map<String, dynamic>;
+
+      final activeRaw = data['active'];
+      if (activeRaw is bool) {
+        isActive = activeRaw;
+      }
+
+      final speedRaw = data['speed'];
+      if (speedRaw is num) {
+        speed = speedRaw.toDouble();
+      }
+
+      final rawLastLocationAt = data['lastLocationAt'];
+      final parsedLastLocationAt = _parseTimestamp(rawLastLocationAt);
+      if (parsedLastLocationAt != null) {
+        lastSentAt = parsedLastLocationAt;
+      }
+
+      final rawLastTrackingAt = data['lastTrackingAt'] ?? data['trackingUpdatedAt'];
+      final parsedLastTrackingAt = _parseTimestamp(rawLastTrackingAt);
+      if (parsedLastTrackingAt != null) {
+        lastTrackingAt = parsedLastTrackingAt;
+      }
+
+      final statusRaw = data['trackingStatus'];
+      if (statusRaw is String && statusRaw.isNotEmpty) {
+        trackingStatus = statusRaw;
+      }
+
+      final messageRaw = data['trackingMessage'];
+      if (messageRaw is String && messageRaw.isNotEmpty) {
+        trackingMessage = messageRaw;
+      }
+
+      checkTrackingHealth(notify: false);
+      notifyListeners();
+    }, onError: (Object listenerError, StackTrace stack) {
+      _logger.e('[listenBusRealtime] Error: $listenerError\n$stack');
     });
   }
 
-  void _retryStartService() {
-    if (_retryCount < _maxRetries) {
-      _retryCount++;
-      Future.delayed(Duration(seconds: 5 * _retryCount), () async {
-        await startService();
-      });
-    } else {
-      error = 'No se pudo iniciar el servicio tras varios intentos.';
-      notifyListeners();
+  DateTime? _parseTimestamp(dynamic raw) {
+    if (raw is Timestamp) {
+      return raw.toDate();
     }
+    if (raw is DateTime) {
+      return raw;
+    }
+    return null;
   }
 
-  void _retryStopService() {
-    if (_retryCount < _maxRetries) {
-      _retryCount++;
-      Future.delayed(Duration(seconds: 5 * _retryCount), () async {
-        await stopService();
-      });
+  Future<bool> _ensureTrackingPrerequisites() async {
+    final locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!locationServiceEnabled) {
+      gpsError = true;
+      trackingStatus = 'gps_off';
+      trackingError = 'Activa el GPS para iniciar rastreo';
+      trackingMessage = 'GPS apagado';
+      return false;
+    }
+
+    gpsError = false;
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.whileInUse) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission != LocationPermission.always) {
+      trackingStatus = 'permission_required';
+      trackingError = 'Se requiere permiso de ubicacion "Siempre"';
+      trackingMessage = 'Permiso de ubicacion insuficiente';
+      return false;
+    }
+
+    if (Platform.isAndroid) {
+      var notificationPermission =
+          await FlutterForegroundTask.checkNotificationPermission();
+      if (notificationPermission != NotificationPermission.granted) {
+        notificationPermission =
+            await FlutterForegroundTask.requestNotificationPermission();
+      }
+
+      if (notificationPermission != NotificationPermission.granted) {
+        trackingStatus = 'permission_required';
+        trackingError = 'Permite notificaciones para mantener el servicio activo';
+        trackingMessage = 'Permiso de notificaciones requerido';
+        return false;
+      }
+
+      final ignoredBatteryOptimization =
+          await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+      if (!ignoredBatteryOptimization) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+    }
+
+    trackingError = null;
+    return true;
+  }
+
+  void _initConnectivityListener() {
+    _connectivitySubscription?.cancel();
+
+    _connectivitySubscription =
+        Connectivity().onConnectivityChanged.listen((results) {
+      final connected =
+          results.isNotEmpty && !results.contains(ConnectivityResult.none);
+      connectionError = !connected;
+
+      checkTrackingHealth(notify: false);
+      notifyListeners();
+    });
+  }
+
+  void _startTrackingHealthTimer() {
+    _trackingHealthTimer?.cancel();
+    _trackingHealthTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      checkTrackingHealth();
+    });
+  }
+
+  void _onForegroundTaskData(Object data) {
+    if (data is! Map) return;
+
+    final payload = Map<String, dynamic>.from(data);
+
+    final statusRaw = payload['trackingStatus'];
+    if (statusRaw is String && statusRaw.isNotEmpty) {
+      trackingStatus = statusRaw;
+    }
+
+    final speedRaw = payload['speed'];
+    if (speedRaw is num) {
+      speed = speedRaw.toDouble();
+    }
+
+    lastTrackingAt = DateTime.now();
+    if (trackingStatus == 'sending') {
+      lastSentAt = DateTime.now();
+    }
+
+    checkTrackingHealth(notify: false);
+    notifyListeners();
+  }
+
+  void checkTrackingHealth({bool notify = true}) {
+    if (!isActive) {
+      isSendingLocation = false;
+
+      if (trackingStatus == 'gps_off') {
+        gpsError = true;
+        trackingError ??= 'GPS apagado';
+      } else if (trackingStatus == 'permission_required') {
+        gpsError = false;
+        trackingError ??= 'Permiso de ubicacion pendiente';
+      } else if (trackingStatus == 'network_error') {
+        gpsError = false;
+        trackingError ??= 'Sin internet';
+      } else {
+        gpsError = false;
+        trackingError = null;
+        trackingStatus = 'off';
+        trackingMessage ??= 'Servicio detenido';
+      }
+
+      if (notify) notifyListeners();
+      return;
+    }
+
+    final now = DateTime.now();
+    final sentAge =
+        lastSentAt != null ? now.difference(lastSentAt!).inSeconds : null;
+    final trackingAge = lastTrackingAt != null
+        ? now.difference(lastTrackingAt!).inSeconds
+        : null;
+
+    gpsError = trackingStatus == 'gps_off';
+
+    if (trackingStatus == 'permission_required') {
+      isSendingLocation = false;
+      trackingError = 'Permiso de ubicacion pendiente';
+    } else if (gpsError) {
+      isSendingLocation = false;
+      trackingError = 'GPS apagado';
+    } else if (connectionError || trackingStatus == 'network_error') {
+      isSendingLocation = false;
+      trackingError = 'Sin internet';
+    } else if (trackingStatus == 'sending') {
+      if (sentAge != null && sentAge <= 12) {
+        isSendingLocation = true;
+        trackingError = null;
+      } else {
+        isSendingLocation = false;
+        trackingError = 'Sin envio reciente';
+      }
+    } else if (trackingStatus == 'idle') {
+      isSendingLocation = false;
+      trackingError = null;
+    } else if (trackingAge != null && trackingAge <= 20) {
+      isSendingLocation = false;
+      trackingError = null;
     } else {
-      error = 'No se pudo detener el servicio tras varios intentos.';
+      isSendingLocation = false;
+      trackingError = 'Sin respuesta del rastreo';
+    }
+
+    if (notify) {
       notifyListeners();
     }
   }
 
   @override
   void dispose() {
+    FlutterForegroundTask.removeTaskDataCallback(_onForegroundTaskData);
     _connectivitySubscription?.cancel();
+    _trackingHealthTimer?.cancel();
+    _busListener?.cancel();
     super.dispose();
   }
 }

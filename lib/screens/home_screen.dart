@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/session_provider.dart';
 import '../widgets/status_indicator.dart';
 import '../services/auth_service.dart';
+import 'package:geolocator/geolocator.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -24,66 +25,44 @@ class HomeScreen extends StatelessWidget {
             child: Column(
               children: [
                 const SizedBox(height: 36),
-                // Avatar grande centrado
                 CircleAvatar(
                   radius: 38,
-                  backgroundColor: Color(0xFFF5F6FA),
-                  child: Icon(Icons.person, color: Color(0xFF1A237E), size: 44),
+                  backgroundColor: const Color(0xFFF5F6FA),
+                  child: const Icon(Icons.person, color: Color(0xFF1A237E), size: 44),
                 ),
                 const SizedBox(height: 18),
-                // Nombre centrado
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Text(
-                    sessionProvider.driver?.name ?? 'Usuario',
+                    driver?.name ?? 'Usuario',
                     style: const TextStyle(
                       color: Colors.black,
                       fontWeight: FontWeight.bold,
                       fontSize: 22,
-                      letterSpacing: 0.1,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                   ),
                 ),
                 const SizedBox(height: 6),
-                // Unidad centrada
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Text(
-                    sessionProvider.bus != null ? 'Unidad: ${sessionProvider.bus!.id}' : '',
-                    style: const TextStyle(
-                      color: Color(0xFF6B7280),
-                      fontWeight: FontWeight.w500,
-                      fontSize: 16,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    bus != null ? 'Unidad: ${bus.id}' : '',
+                    style: const TextStyle(color: Color(0xFF6B7280)),
                     textAlign: TextAlign.center,
                   ),
                 ),
-                const SizedBox(height: 32),
-                // Espacio para futuras opciones
                 const Spacer(),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      icon: const Icon(Icons.logout, color: Color(0xFF1A237E)),
-                      label: const Text('Cerrar sesión', style: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.w600, fontSize: 17)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF5F6FA),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        alignment: Alignment.center,
-                      ),
+                      icon: const Icon(Icons.logout),
+                      label: const Text('Cerrar sesión'),
                       onPressed: () async {
                         Navigator.pop(context);
                         await sessionProvider.stopService();
-                        sessionProvider.clearError();
                         await AuthService().signOut();
                         if (!context.mounted) return;
                         Navigator.pushReplacementNamed(context, '/');
@@ -103,7 +82,6 @@ class HomeScreen extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     if (sessionProvider.error != null)
                       Padding(
@@ -113,7 +91,7 @@ class HomeScreen extends StatelessWidget {
                           style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
                         ),
                       ),
-                    // Tarjeta de información profesional
+
                     _ProfessionalInfoCard(
                       isActive: sessionProvider.isActive,
                       speed: sessionProvider.speed,
@@ -121,8 +99,9 @@ class HomeScreen extends StatelessWidget {
                       busId: bus?.id,
                       routeName: route?.name,
                     ),
+
                     const SizedBox(height: 36),
-                    // Switch grande de servicio
+
                     GestureDetector(
                       onTap: (sessionProvider.error == null && driver != null && bus != null && route != null)
                           ? () async {
@@ -133,14 +112,8 @@ class HomeScreen extends StatelessWidget {
                                     title: const Text('Confirmar'),
                                     content: const Text('¿Seguro que deseas detener el servicio?'),
                                     actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(context, false),
-                                        child: const Text('Cancelar'),
-                                      ),
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(context, true),
-                                        child: const Text('Detener'),
-                                      ),
+                                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+                                      TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Detener')),
                                     ],
                                   ),
                                 );
@@ -157,54 +130,61 @@ class HomeScreen extends StatelessWidget {
                         width: 120,
                         height: 120,
                         decoration: BoxDecoration(
-                          color: sessionProvider.isActive
-                              ? Colors.green.shade400
-                              : Colors.grey.shade300,
+                          color: sessionProvider.isActive ? Colors.green.shade400 : Colors.grey.shade300,
                           borderRadius: BorderRadius.circular(60),
-                          boxShadow: [
-                            BoxShadow(
-                              color: sessionProvider.isActive
-                                  ? Colors.green.withOpacity(0.2)
-                                  : Colors.grey.withOpacity(0.1),
-                              blurRadius: 16,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
                         ),
                         child: Center(
                           child: Icon(
-                            sessionProvider.isActive ? Icons.power_settings_new : Icons.power_settings_new,
+                            Icons.power_settings_new,
                             color: sessionProvider.isActive ? Colors.white : Colors.grey.shade600,
                             size: 64,
                           ),
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 16),
-                    Text(
-                      sessionProvider.isActive ? 'Servicio activo' : 'Servicio apagado',
-                      style: TextStyle(
-                        color: sessionProvider.isActive ? Colors.green.shade700 : Colors.grey.shade600,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
+
+                    StatusIndicator(
+                      isActive: sessionProvider.isActive,
+                      isSendingLocation: sessionProvider.isSendingLocation,
+                      gpsError: sessionProvider.gpsError,
+                      connectionError: sessionProvider.connectionError,
+                      trackingStatus: sessionProvider.trackingStatus,
+                      trackingError: sessionProvider.trackingError,
+                      trackingMessage: sessionProvider.trackingMessage,
+                      lastSentAt: sessionProvider.lastSentAt,
+                      lastTrackingAt: sessionProvider.lastTrackingAt,
                     ),
+
+                    const SizedBox(height: 16),
+
+                    if (sessionProvider.gpsError)
+                      ElevatedButton(
+                        onPressed: () => Geolocator.openLocationSettings(),
+                        child: const Text('Activar GPS'),
+                      ),
+
+                    if (sessionProvider.connectionError)
+                      ElevatedButton(
+                        onPressed: () {},
+                        child: const Text('Revisar conexión'),
+                      ),
                   ],
                 ),
               ),
             ),
     );
   }
-
 }
 
+// 🔥 Card profesional de estado y datos
 class _ProfessionalInfoCard extends StatefulWidget {
   final bool isActive;
   final double? speed;
   final String? driverName;
   final String? busId;
   final String? routeName;
-
   const _ProfessionalInfoCard({
     required this.isActive,
     required this.speed,
@@ -212,7 +192,6 @@ class _ProfessionalInfoCard extends StatefulWidget {
     required this.busId,
     required this.routeName,
   });
-
   @override
   State<_ProfessionalInfoCard> createState() => _ProfessionalInfoCardState();
 }

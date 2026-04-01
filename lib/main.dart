@@ -1,27 +1,46 @@
-
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:provider/provider.dart';
-import 'package:logger/logger.dart';
 import 'services/session_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/service_screen.dart';
 import 'widgets/professional_theme.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final Logger _logger = Logger();
-  _logger.i('Iniciando inicialización de Firebase...');
-  try {
-    await Firebase.initializeApp();
-    _logger.i('Firebase inicializado correctamente');
-  } catch (e, st) {
-    _logger.e('Error al inicializar Firebase: $e\n$st');
-  }
+  await Firebase.initializeApp();
+
+  FlutterForegroundTask.initCommunicationPort();
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'bus_radar_tracking',
+      channelName: 'Rastreo de unidad',
+      channelDescription:
+          'Mantiene el envio de ubicacion de la unidad mientras esta en ruta.',
+      channelImportance: NotificationChannelImportance.DEFAULT,
+      priority: NotificationPriority.DEFAULT,
+      playSound: false,
+      enableVibration: false,
+      showBadge: false,
+      onlyAlertOnce: true,
+      visibility: NotificationVisibility.VISIBILITY_PUBLIC,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(
+      showNotification: true,
+      playSound: false,
+    ),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.repeat(4000),
+      autoRunOnBoot: true,
+      autoRunOnMyPackageReplaced: true,
+      allowWakeLock: true,
+      allowWifiLock: true,
+      allowAutoRestart: true,
+    ),
+  );
+
   runApp(const BusRadarDriverApp());
 }
 

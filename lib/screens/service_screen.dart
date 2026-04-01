@@ -36,8 +36,14 @@ class _ServiceScreenState extends State<ServiceScreen> {
                           children: [
                             StatusIndicator(
                               isActive: sessionProvider.isActive,
+                              isSendingLocation: sessionProvider.isSendingLocation,
                               gpsError: sessionProvider.gpsError,
                               connectionError: sessionProvider.connectionError,
+                              trackingStatus: sessionProvider.trackingStatus,
+                              trackingError: sessionProvider.trackingError,
+                              trackingMessage: sessionProvider.trackingMessage,
+                              lastSentAt: sessionProvider.lastSentAt,
+                              lastTrackingAt: sessionProvider.lastTrackingAt,
                             ),
                             const SizedBox(height: 16),
                             if (driver != null)

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-class StatusIndicator extends StatelessWidget {
+class StatusIndicator extends StatefulWidget {
   final bool isActive;
   final bool isSendingLocation;
   final bool gpsError;
@@ -24,6 +24,56 @@ class StatusIndicator extends StatelessWidget {
     this.lastTrackingAt,
   });
 
+  @override
+  State<StatusIndicator> createState() => _StatusIndicatorState();
+}
+
+class _StatusIndicatorState extends State<StatusIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _blinkController;
+  late final Animation<double> _blinkAnimation;
+
+  bool get _isSending =>
+      widget.isActive && widget.isSendingLocation && widget.trackingStatus == 'sending';
+
+  @override
+  void initState() {
+    super.initState();
+    _blinkController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _blinkAnimation = Tween<double>(begin: 0.25, end: 1).animate(
+      CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
+    );
+    _syncBlink();
+  }
+
+  @override
+  void didUpdateWidget(covariant StatusIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final wasSending =
+        oldWidget.isActive && oldWidget.isSendingLocation && oldWidget.trackingStatus == 'sending';
+    if (_isSending != wasSending) {
+      _syncBlink();
+    }
+  }
+
+  void _syncBlink() {
+    if (_isSending) {
+      _blinkController.repeat(reverse: true);
+    } else {
+      _blinkController.stop();
+      _blinkController.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _blinkController.dispose();
+    super.dispose();
+  }
+
   String _formatAge(DateTime? dateTime) {
     if (dateTime == null) return 'sin registro reciente';
 
@@ -34,116 +84,131 @@ class StatusIndicator extends StatelessWidget {
     return 'hace ${minutes}m';
   }
 
-  _StatusVisual _resolveVisual() {
-    if (!isActive) {
-      return _StatusVisual(
-        color: Colors.grey.shade700,
-        icon: Icons.power_settings_new_rounded,
-        title: 'Servicio apagado',
-        subtitle: 'Presiona el boton para iniciar la ruta.',
+  _IndicatorData _resolveIndicator() {
+    if (!widget.isActive) {
+      return const _IndicatorData(
+        color: Color(0xFF6B7280),
+        title: 'Servicio detenido',
+        subtitle: 'Activa el servicio para iniciar el rastreo.',
       );
     }
 
-    if (gpsError || trackingStatus == 'gps_off') {
-      return _StatusVisual(
-        color: Colors.orange.shade800,
-        icon: Icons.gps_off_rounded,
-        title: 'GPS apagado',
-        subtitle: 'Activa GPS para poder enviar ubicacion.',
+    if (widget.gpsError || widget.trackingStatus == 'gps_off') {
+      return const _IndicatorData(
+        color: Color(0xFFD97706),
+        title: 'GPS desactivado',
+        subtitle: 'Activa el GPS para enviar ubicación.',
       );
     }
 
-    if (trackingStatus == 'permission_required') {
-      return _StatusVisual(
-        color: Colors.deepOrange.shade700,
-        icon: Icons.lock_outline_rounded,
-        title: 'Falta permiso de ubicacion',
-        subtitle: trackingMessage ?? 'Se requiere permiso en segundo plano.',
+    if (widget.connectionError || widget.trackingStatus == 'network_error') {
+      return const _IndicatorData(
+        color: Color(0xFFB91C1C),
+        title: 'Sin conexión',
+        subtitle: 'No hay red disponible para transmitir ubicación.',
       );
     }
 
-    if (connectionError || trackingStatus == 'network_error') {
-      return _StatusVisual(
-        color: Colors.red.shade700,
-        icon: Icons.wifi_off_rounded,
-        title: 'Sin internet',
-        subtitle: 'No se puede enviar ubicacion en este momento.',
+    if (_isSending) {
+      return _IndicatorData(
+        color: const Color(0xFF1F8B4C),
+        title: 'Enviando ubicación',
+        subtitle: 'Último envío ${_formatAge(widget.lastSentAt)}.',
       );
     }
 
-    if (isSendingLocation && trackingStatus == 'sending') {
-      return _StatusVisual(
-        color: Colors.green.shade700,
-        icon: Icons.near_me_rounded,
-        title: 'Ubicacion enviandose',
-        subtitle: 'Ultimo envio ${_formatAge(lastSentAt)}.',
-      );
-    }
-
-    if (trackingStatus == 'idle') {
-      return _StatusVisual(
-        color: Colors.blueGrey.shade700,
-        icon: Icons.pause_circle_filled_rounded,
+    if (widget.trackingStatus == 'idle') {
+      return const _IndicatorData(
+        color: Color(0xFF475569),
         title: 'Servicio activo sin movimiento',
-        subtitle: 'No se envia ubicacion cuando la unidad esta detenida.',
+        subtitle: 'No se envía ubicación cuando la unidad está detenida.',
       );
     }
 
-    if (trackingError != null) {
-      return _StatusVisual(
-        color: Colors.red.shade700,
-        icon: Icons.error_outline_rounded,
-        title: 'Atencion requerida',
-        subtitle: trackingError!,
+    if (widget.trackingError != null) {
+      return _IndicatorData(
+        color: const Color(0xFFB91C1C),
+        title: 'Revisión requerida',
+        subtitle: widget.trackingError!,
       );
     }
 
-    return _StatusVisual(
-      color: Colors.amber.shade800,
-      icon: Icons.sync_problem_rounded,
-      title: 'Verificando rastreo',
-      subtitle: 'Ultima senal ${_formatAge(lastTrackingAt)}.',
+    return _IndicatorData(
+      color: const Color(0xFF475569),
+      title: 'Verificando estado',
+      subtitle: 'Última actualización ${_formatAge(widget.lastTrackingAt)}.',
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final visual = _resolveVisual();
+    final theme = Theme.of(context);
+    final indicator = _resolveIndicator();
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
+    return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
-        color: visual.color.withValues(alpha: 0.09),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: visual.color.withValues(alpha: 0.3)),
+        color: const Color(0xFFF2F4F7),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD1D5DB)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(visual.icon, color: visual.color, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  visual.title,
-                  style: TextStyle(
-                    color: visual.color,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Icon(
+                  _isSending ? Icons.wifi_tethering_rounded : Icons.pause_circle_filled,
+                  size: 22,
+                  color: const Color(0xFF546E7A),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  indicator.title,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: const Color(0xFF334155),
+                    fontSize: 16,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  visual.subtitle,
-                  style: TextStyle(
-                    color: visual.color.withValues(alpha: 0.9),
-                    fontSize: 13,
+              ),
+              FadeTransition(
+                opacity: _isSending ? _blinkAnimation : const AlwaysStoppedAnimation(1),
+                child: Container(
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: indicator.color,
+                    shape: BoxShape.circle,
+                    boxShadow: _isSending
+                        ? [
+                            BoxShadow(
+                              color: indicator.color.withValues(alpha: 0.45),
+                              blurRadius: 10,
+                              spreadRadius: 2,
+                            ),
+                          ]
+                        : null,
                   ),
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            indicator.subtitle,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF475569),
             ),
           ),
         ],
@@ -152,15 +217,13 @@ class StatusIndicator extends StatelessWidget {
   }
 }
 
-class _StatusVisual {
+class _IndicatorData {
   final Color color;
-  final IconData icon;
   final String title;
   final String subtitle;
 
-  const _StatusVisual({
+  const _IndicatorData({
     required this.color,
-    required this.icon,
     required this.title,
     required this.subtitle,
   });

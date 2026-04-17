@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Bus {
   final String id;
+  final String? alias;
   final String routeId;
   final DocumentReference assignedDriverRef;
   final bool active;
@@ -12,6 +13,7 @@ class Bus {
 
   Bus({
     required this.id,
+    this.alias,
     required this.routeId,
     required this.assignedDriverRef,
     required this.active,
@@ -21,10 +23,19 @@ class Bus {
     this.lng,
   });
 
+  String get displayName {
+    final value = alias?.trim();
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+    return id;
+  }
+
   factory Bus.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return Bus(
       id: doc.id,
+      alias: data['alias'] as String?,
       routeId: data['routeId'],
       assignedDriverRef: data['assignedDriverRef'] as DocumentReference,
       active: data['active'],

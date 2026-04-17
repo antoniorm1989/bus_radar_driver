@@ -77,7 +77,7 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Bus Radar Driver')),
       drawer: _OperationsDrawer(
         driverName: driver?.name,
-        busId: bus?.id,
+        busId: bus?.displayName,
         routeName: route?.name,
         isServiceActive: sessionProvider.isActive,
         onSignOut: () async {
@@ -108,7 +108,7 @@ class HomeScreen extends StatelessWidget {
                             isActive: sessionProvider.isActive,
                             speed: sessionProvider.speed,
                             driverName: driver?.name,
-                            busId: bus?.id,
+                            busId: bus?.displayName,
                             routeName: route?.name,
                           ),
                           Expanded(

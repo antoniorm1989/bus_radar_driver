@@ -7,8 +7,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:logger/logger.dart';
 
 const Duration _kTrackingStatusThrottle = Duration(seconds: 15);
-const double _kMinMovingDistanceMeters = 8;
-const double _kMinMovingSpeedKmh = 4;
+const Duration _kTrackingTickInterval = Duration(seconds: 7);
+const Duration _kHeartbeatInterval = Duration(seconds: 60);
+const double _kMinMovingDistanceMeters = 20;
 
 @pragma('vm:entry-point')
 void startLocationTaskCallback() {
@@ -22,6 +23,7 @@ class LocationTaskHandler extends TaskHandler {
 
   double? _lastLat;
   double? _lastLng;
+  DateTime? _lastFirestoreWriteAt;
 
   String? _lastTrackingStatus;
   DateTime? _lastTrackingStatusWrite;
@@ -122,55 +124,51 @@ class LocationTaskHandler extends TaskHandler {
       final lng = position.longitude;
       final speedKmh = max(0, position.speed * 3.6);
 
-      final hasPreviousFix = _lastLat != null && _lastLng != null;
-      final movedDistanceMeters = hasPreviousFix
+      final now = DateTime.now();
+      final hasPreviousWrite = _lastLat != null && _lastLng != null;
+      final movedDistanceMeters = hasPreviousWrite
           ? Geolocator.distanceBetween(_lastLat!, _lastLng!, lat, lng)
           : 0;
+      final movedEnough = !hasPreviousWrite || movedDistanceMeters >= _kMinMovingDistanceMeters;
+      final heartbeatDue = _lastFirestoreWriteAt == null ||
+          now.difference(_lastFirestoreWriteAt!) >= _kHeartbeatInterval;
+      final intervalReady = _lastFirestoreWriteAt == null ||
+          now.difference(_lastFirestoreWriteAt!) >= _kTrackingTickInterval;
 
-      final isMoving = speedKmh >= _kMinMovingSpeedKmh ||
-          (hasPreviousFix && movedDistanceMeters >= _kMinMovingDistanceMeters);
+      if (intervalReady && (movedEnough || heartbeatDue)) {
+        final trackingStatus = movedEnough ? 'sending' : 'idle';
+        final trackingMessage = movedEnough ? 'Ubicacion enviada' : 'Heartbeat de rastreo';
 
-      _lastLat = lat;
-      _lastLng = lng;
+        await FirebaseFirestore.instance.collection('buses').doc(busId).set({
+          'lat': lat,
+          'lng': lng,
+          'speed': speedKmh,
+          if (movedEnough) 'lastLocationAt': FieldValue.serverTimestamp(),
+          'serverTime': FieldValue.serverTimestamp(),
+          'lastTrackingAt': FieldValue.serverTimestamp(),
+          'trackingStatus': trackingStatus,
+          'trackingMessage': trackingMessage,
+          'trackingUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
 
-      if (!isMoving) {
-        await _writeTrackingStatus(
-          busId,
-          'idle',
-          'Servicio activo sin movimiento',
-          extra: {
-            'speed': 0.0,
-            'lastTrackingAt': FieldValue.serverTimestamp(),
-          },
-        );
+        _lastLat = lat;
+        _lastLng = lng;
+        _lastFirestoreWriteAt = now;
+        _lastTrackingStatus = trackingStatus;
+        _lastTrackingStatusWrite = now;
 
         FlutterForegroundTask.sendDataToMain({
-          'trackingStatus': 'idle',
-          'speed': 0.0,
-          'at': DateTime.now().toIso8601String(),
+          'trackingStatus': trackingStatus,
+          'speed': speedKmh,
+          'at': now.toIso8601String(),
         });
         return;
       }
 
-      await FirebaseFirestore.instance.collection('buses').doc(busId).set({
-        'lat': lat,
-        'lng': lng,
-        'speed': speedKmh,
-        'lastLocationAt': FieldValue.serverTimestamp(),
-        'serverTime': FieldValue.serverTimestamp(),
-        'lastTrackingAt': FieldValue.serverTimestamp(),
-        'trackingStatus': 'sending',
-        'trackingMessage': 'Ubicacion enviada',
-        'trackingUpdatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      _lastTrackingStatus = 'sending';
-      _lastTrackingStatusWrite = DateTime.now();
-
       FlutterForegroundTask.sendDataToMain({
-        'trackingStatus': 'sending',
+        'trackingStatus': 'idle',
         'speed': speedKmh,
-        'at': DateTime.now().toIso8601String(),
+        'at': now.toIso8601String(),
       });
     } catch (e) {
       final busId = await FlutterForegroundTask.getData<String>(key: 'busId');

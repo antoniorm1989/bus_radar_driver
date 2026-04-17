@@ -109,6 +109,26 @@ class _StatusIndicatorState extends State<StatusIndicator>
       );
     }
 
+    final trackingAgeSeconds = widget.lastTrackingAt != null
+        ? DateTime.now().difference(widget.lastTrackingAt!).inSeconds
+        : null;
+
+    if (trackingAgeSeconds != null && trackingAgeSeconds > 180) {
+      return _IndicatorData(
+        color: const Color(0xFFB91C1C),
+        title: 'Desconectado',
+        subtitle: 'Más de 3 minutos sin actualización (${_formatAge(widget.lastTrackingAt)}).',
+      );
+    }
+
+    if (trackingAgeSeconds != null && trackingAgeSeconds > 60) {
+      return _IndicatorData(
+        color: const Color(0xFFD97706),
+        title: 'Detenido',
+        subtitle: 'Más de 1 minuto sin actualización (${_formatAge(widget.lastTrackingAt)}).',
+      );
+    }
+
     if (_isSending) {
       return _IndicatorData(
         color: const Color(0xFF1F8B4C),

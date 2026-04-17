@@ -91,8 +91,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       Center(
                         child: Container(
-                          width: 112,
-                          height: 112,
+                          width: 132,
+                          height: 132,
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(32),
@@ -105,23 +105,15 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                           ),
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              Container(
-                                width: 72,
-                                height: 72,
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primary.withValues(alpha: 0.08),
-                                  shape: BoxShape.circle,
-                                ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(24),
+                              child: Image.asset(
+                                'assets/branding/logo_oficial.png',
+                                fit: BoxFit.cover,
                               ),
-                              Icon(
-                                Icons.directions_bus_rounded,
-                                size: 42,
-                                color: theme.colorScheme.primary,
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       ),

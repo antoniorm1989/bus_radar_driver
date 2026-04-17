@@ -98,7 +98,7 @@ class _ServiceScreenState extends State<ServiceScreen> {
                                       _ServiceInfoRow(
                                         icon: Icons.directions_bus_rounded,
                                         label: 'Unidad',
-                                        value: bus.id,
+                                        value: bus.displayName,
                                       ),
                                     if (route != null)
                                       _ServiceInfoRow(

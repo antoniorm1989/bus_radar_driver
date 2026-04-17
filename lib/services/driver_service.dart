@@ -13,6 +13,51 @@ class DriverService {
   Bus? _cachedBus;
   RouteModel? _cachedRoute;
 
+  Future<Driver?> getDriverForSession({
+    required String authUid,
+    String? email,
+  }) async {
+    final driverByUid = await getDriver(authUid);
+    if (driverByUid != null) {
+      return driverByUid;
+    }
+
+    final rawEmail = email?.trim();
+    if (rawEmail == null || rawEmail.isEmpty) {
+      _logger.w('No se encontro driver por uid y no hay email para fallback');
+      return null;
+    }
+
+    final cached = _cachedDriver;
+    if (cached != null && cached.email.toLowerCase() == rawEmail.toLowerCase()) {
+      _logger.i('Driver obtenido desde cache por email');
+      return cached;
+    }
+
+    final lookupCandidates = <String>{rawEmail, rawEmail.toLowerCase()};
+
+    for (final candidate in lookupCandidates) {
+      _logger.i('Buscando driver por email: $candidate');
+
+      final query = await _firestore
+          .collection('drivers')
+          .where('email', isEqualTo: candidate)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) {
+        continue;
+      }
+
+      _cachedDriver = Driver.fromFirestore(query.docs.first);
+      _logger.i('Driver cargado correctamente por email');
+      return _cachedDriver;
+    }
+
+    _logger.w('Driver no existe por uid ni por email');
+    return null;
+  }
+
   Future<Driver?> getDriver(String driverId) async {
     if (_cachedDriver != null && _cachedDriver!.id == driverId) {
       _logger.i('Driver obtenido desde cache');

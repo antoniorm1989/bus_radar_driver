@@ -13,10 +13,16 @@ class RouteModel {
 
   factory RouteModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+
+    final rawName = data['name'];
+    final rawActive = data['active'];
+
     return RouteModel(
       id: doc.id,
-      name: data['name'],
-      active: data['active'],
+      name: rawName is String && rawName.trim().isNotEmpty
+          ? rawName
+          : 'Ruta sin nombre',
+      active: rawActive is bool ? rawActive : false,
     );
   }
 }

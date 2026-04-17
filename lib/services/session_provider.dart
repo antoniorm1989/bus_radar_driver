@@ -68,10 +68,13 @@ class SessionProvider extends ChangeNotifier {
         return;
       }
 
-      driver = await _driverService.getDriver(user.uid);
+      driver = await _driverService.getDriverForSession(
+        authUid: user.uid,
+        email: user.email,
+      );
       if (driver == null || !(driver?.active ?? false)) {
         error = 'Chofer invalido';
-        _logger.w('[init] Chofer invalido');
+        _logger.w('[init] Chofer invalido uid=${user.uid} email=${user.email}');
         return;
       }
 
@@ -415,6 +418,9 @@ class SessionProvider extends ChangeNotifier {
     final trackingAge = lastTrackingAt != null
         ? now.difference(lastTrackingAt!).inSeconds
         : null;
+    final hasFreshTracking = trackingAge != null && trackingAge <= 60;
+    final isTemporarilyStopped = trackingAge != null && trackingAge > 60 && trackingAge <= 180;
+    final isDisconnected = trackingAge != null && trackingAge > 180;
 
     gpsError = trackingStatus == 'gps_off';
 
@@ -427,18 +433,24 @@ class SessionProvider extends ChangeNotifier {
     } else if (connectionError || trackingStatus == 'network_error') {
       isSendingLocation = false;
       trackingError = 'Sin internet';
+    } else if (isDisconnected) {
+      isSendingLocation = false;
+      trackingError = null;
+    } else if (isTemporarilyStopped) {
+      isSendingLocation = false;
+      trackingError = null;
     } else if (trackingStatus == 'sending') {
-      if (sentAge != null && sentAge <= 12) {
+      if (hasFreshTracking && sentAge != null && sentAge <= 60) {
         isSendingLocation = true;
         trackingError = null;
       } else {
         isSendingLocation = false;
-        trackingError = 'Sin envio reciente';
+        trackingError = null;
       }
     } else if (trackingStatus == 'idle') {
       isSendingLocation = false;
       trackingError = null;
-    } else if (trackingAge != null && trackingAge <= 20) {
+    } else if (hasFreshTracking) {
       isSendingLocation = false;
       trackingError = null;
     } else {

@@ -34,7 +34,7 @@ class _StatusIndicatorState extends State<StatusIndicator>
   late final Animation<double> _blinkAnimation;
 
   bool get _isSending =>
-      widget.isActive && widget.isSendingLocation && widget.trackingStatus == 'sending';
+      widget.isActive && widget.isSendingLocation;
 
   @override
   void initState() {
@@ -52,8 +52,7 @@ class _StatusIndicatorState extends State<StatusIndicator>
   @override
   void didUpdateWidget(covariant StatusIndicator oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final wasSending =
-        oldWidget.isActive && oldWidget.isSendingLocation && oldWidget.trackingStatus == 'sending';
+    final wasSending = oldWidget.isActive && oldWidget.isSendingLocation;
     if (_isSending != wasSending) {
       _syncBlink();
     }

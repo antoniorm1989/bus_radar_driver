@@ -13,6 +13,73 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  bool _isSigningIn = false;
+  String? _authError;
+
+  String _buildSignInErrorMessage(Object error) {
+    final raw = error.toString();
+
+    if (raw.contains('DEVELOPER_ERROR')) {
+      return 'Google Sign-In no esta configurado para este build (SHA/package).';
+    }
+    if (raw.contains('network_error') ||
+        raw.contains('network-request-failed') ||
+        raw.contains('unavailable')) {
+      return 'No hay conexion con el servidor. Intenta nuevamente.';
+    }
+
+    return 'No se pudo iniciar sesion';
+  }
+
+  Future<void> _handleSignIn({
+    required SessionProvider sessionProvider,
+    required Future<User?> Function() signIn,
+  }) async {
+    if (_isSigningIn) return;
+
+    setState(() {
+      _isSigningIn = true;
+      _authError = null;
+    });
+
+    try {
+      final user = await signIn();
+
+      if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          _authError = 'No se pudo iniciar sesion';
+        });
+        return;
+      }
+
+      // Let the Google credential UI fully dismiss before route transition.
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+
+      await sessionProvider.initializeSession();
+      if (!mounted) return;
+
+      if (sessionProvider.error == null) {
+        sessionProvider.error = null;
+        sessionProvider.notifyListeners();
+        setState(() {
+          _authError = null;
+        });
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _authError = _buildSignInErrorMessage(e);
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isSigningIn = false;
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -27,6 +94,11 @@ class _LoginScreenState extends State<LoginScreen> {
         await sessionProvider.initializeSession();
 
         if (sessionProvider.error == null && mounted) {
+          sessionProvider.error = null;
+          sessionProvider.notifyListeners();
+          setState(() {
+            _authError = null;
+          });
           Navigator.pushReplacementNamed(context, '/home');
         }
       }
@@ -40,6 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final bool isAndroid = Platform.isAndroid;
     final bool isIOS = Platform.isIOS;
     final theme = Theme.of(context);
+    final visibleError = _authError ?? sessionProvider.error;
 
     return Scaffold(
       body: Stack(
@@ -215,7 +288,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         ],
                                       ),
                                     ),
-                                    if (sessionProvider.error != null) ...[
+                                    if (visibleError != null) ...[
                                       const SizedBox(height: 18),
                                       Container(
                                         padding: const EdgeInsets.all(14),
@@ -230,7 +303,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             const SizedBox(width: 10),
                                             Expanded(
                                               child: Text(
-                                                sessionProvider.error!,
+                                                visibleError,
                                                 style: theme.textTheme.bodyMedium?.copyWith(
                                                   color: const Color(0xFF8B1E18),
                                                   fontWeight: FontWeight.w600,
@@ -248,19 +321,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                         child: ElevatedButton.icon(
                                           icon: const Icon(Icons.login_rounded),
                                           label: const Text('Iniciar sesión con Google'),
-                                          onPressed: () async {
-                                            final user = await authService.signInWithGoogle();
-                                            if (user != null) {
-                                              await sessionProvider.initializeSession();
-                                              if (sessionProvider.error == null) {
-                                                if (!mounted) return;
-                                                Navigator.pushReplacementNamed(context, '/home');
-                                              }
-                                            } else {
-                                              sessionProvider.error = 'No se pudo iniciar sesión';
-                                              sessionProvider.notifyListeners();
-                                            }
-                                          },
+                                          onPressed: _isSigningIn
+                                              ? null
+                                              : () {
+                                                  _handleSignIn(
+                                                    sessionProvider: sessionProvider,
+                                                    signIn: authService.signInWithGoogle,
+                                                  );
+                                                },
                                         ),
                                       ),
                                     if (isIOS)
@@ -269,19 +337,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                         child: ElevatedButton.icon(
                                           icon: const Icon(Icons.apple),
                                           label: const Text('Iniciar sesión con Apple'),
-                                          onPressed: () async {
-                                            final user = await authService.signInWithApple();
-                                            if (user != null) {
-                                              await sessionProvider.initializeSession();
-                                              if (sessionProvider.error == null) {
-                                                if (!mounted) return;
-                                                Navigator.pushReplacementNamed(context, '/home');
-                                              }
-                                            } else {
-                                              sessionProvider.error = 'No se pudo iniciar sesión';
-                                              sessionProvider.notifyListeners();
-                                            }
-                                          },
+                                          onPressed: _isSigningIn
+                                              ? null
+                                              : () {
+                                                  _handleSignIn(
+                                                    sessionProvider: sessionProvider,
+                                                    signIn: authService.signInWithApple,
+                                                  );
+                                                },
                                         ),
                                       ),
                                   ],

@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:provider/provider.dart';
 import 'services/session_provider.dart';
 import 'screens/login_screen.dart';
-import 'screens/home_screen.dart';
+import 'screens/app_shell_screen.dart';
 import 'screens/service_screen.dart';
 import 'widgets/professional_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true,
+    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+  );
+  await FirebaseFirestore.instance.enableNetwork();
 
   FlutterForegroundTask.initCommunicationPort();
   FlutterForegroundTask.init(
@@ -57,7 +63,7 @@ class BusRadarDriverApp extends StatelessWidget {
         initialRoute: '/',
         routes: {
           '/': (context) => const LoginScreen(),
-          '/home': (context) => const HomeScreen(),
+          '/home': (context) => const AppShellScreen(),
           '/service': (context) => const ServiceScreen(),
         },
       ),

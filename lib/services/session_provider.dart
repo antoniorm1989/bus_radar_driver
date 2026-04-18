@@ -107,6 +107,14 @@ class SessionProvider extends ChangeNotifier {
 
       _initialized = true;
       _logger.i('[init] Sesion inicializada');
+    } on FirebaseException catch (e, st) {
+      if (e.code == 'unavailable' || e.code == 'deadline-exceeded') {
+        error =
+            'No se pudo conectar al servidor. Revisa internet e intenta nuevamente.';
+      } else {
+        error = 'Error inicializando';
+      }
+      _logger.e('[init] Error inicializando (${e.code}): ${e.message}\n$st');
     } catch (e, st) {
       error = 'Error inicializando';
       _logger.e('[init] Error inicializando: $e\n$st');
@@ -291,6 +299,36 @@ class SessionProvider extends ChangeNotifier {
   }
 
   Future<bool> _ensureTrackingPrerequisites() async {
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      gpsError = false;
+      trackingStatus = 'permission_required';
+      trackingError =
+          'Permiso de ubicacion bloqueado. Abre Ajustes y selecciona "Permitir siempre".';
+      trackingMessage = 'Permiso de ubicacion bloqueado';
+      return false;
+    }
+
+    if (permission == LocationPermission.whileInUse) {
+      final upgradedPermission = await Geolocator.requestPermission();
+      if (upgradedPermission == LocationPermission.always) {
+        permission = upgradedPermission;
+      }
+    }
+
+    if (permission != LocationPermission.always) {
+      gpsError = false;
+      trackingStatus = 'permission_required';
+      trackingError =
+          'Se requiere permiso de ubicacion "Siempre". Activalo desde Ajustes del sistema.';
+      trackingMessage = 'Permiso de ubicacion insuficiente';
+      return false;
+    }
+
     final locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!locationServiceEnabled) {
       gpsError = true;
@@ -301,21 +339,6 @@ class SessionProvider extends ChangeNotifier {
     }
 
     gpsError = false;
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.whileInUse) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission != LocationPermission.always) {
-      trackingStatus = 'permission_required';
-      trackingError = 'Se requiere permiso de ubicacion "Siempre"';
-      trackingMessage = 'Permiso de ubicacion insuficiente';
-      return false;
-    }
 
     if (Platform.isAndroid) {
       var notificationPermission =
@@ -419,6 +442,7 @@ class SessionProvider extends ChangeNotifier {
         ? now.difference(lastTrackingAt!).inSeconds
         : null;
     final hasFreshTracking = trackingAge != null && trackingAge <= 60;
+    final hasRecentSend = sentAge != null && sentAge <= 20;
     final isTemporarilyStopped = trackingAge != null && trackingAge > 60 && trackingAge <= 180;
     final isDisconnected = trackingAge != null && trackingAge > 180;
 
@@ -448,10 +472,12 @@ class SessionProvider extends ChangeNotifier {
         trackingError = null;
       }
     } else if (trackingStatus == 'idle') {
-      isSendingLocation = false;
+      // Keep sending state for a short grace period to avoid visual flapping
+      // when one tick reports idle between sending updates.
+      isSendingLocation = hasFreshTracking && hasRecentSend;
       trackingError = null;
     } else if (hasFreshTracking) {
-      isSendingLocation = false;
+      isSendingLocation = hasRecentSend;
       trackingError = null;
     } else {
       isSendingLocation = false;

@@ -10,6 +10,7 @@ const Duration _kTrackingStatusThrottle = Duration(seconds: 15);
 const Duration _kTrackingTickInterval = Duration(seconds: 7);
 const Duration _kHeartbeatInterval = Duration(seconds: 60);
 const double _kMinMovingDistanceMeters = 20;
+const double _kMovingSpeedThresholdKmh = 2.8;
 const double _kSignificantSpeedDeltaKmh = 2.0;
 const double _kStoppedSpeedThresholdKmh = 1.8;
 
@@ -144,6 +145,8 @@ class LocationTaskHandler extends TaskHandler {
           ? Geolocator.distanceBetween(_lastLat!, _lastLng!, lat, lng)
           : 0;
       final movedEnough = !hasPreviousWrite || movedDistanceMeters >= _kMinMovingDistanceMeters;
+      final movingBySpeed = speedKmh >= _kMovingSpeedThresholdKmh;
+      final isLikelyMoving = movedEnough || movingBySpeed;
       final heartbeatDue = _lastFirestoreWriteAt == null ||
           now.difference(_lastFirestoreWriteAt!) >= _kHeartbeatInterval;
       final intervalReady = _lastFirestoreWriteAt == null ||
@@ -159,15 +162,15 @@ class LocationTaskHandler extends TaskHandler {
           speedStateChanged ||
           (speedChange != null && speedChange >= _kSignificantSpeedDeltaKmh);
 
-      if (intervalReady && (movedEnough || heartbeatDue || speedChangedEnough)) {
-        final trackingStatus = movedEnough ? 'sending' : 'idle';
-        final trackingMessage = movedEnough ? 'Ubicacion enviada' : 'Heartbeat de rastreo';
+      if (intervalReady && (isLikelyMoving || heartbeatDue || speedChangedEnough)) {
+        final trackingStatus = isLikelyMoving ? 'sending' : 'idle';
+        final trackingMessage = isLikelyMoving ? 'Ubicacion enviada' : 'Heartbeat de rastreo';
 
         await FirebaseFirestore.instance.collection('buses').doc(busId).set({
           'lat': lat,
           'lng': lng,
           'speed': speedKmh,
-          if (movedEnough) 'lastLocationAt': FieldValue.serverTimestamp(),
+          if (isLikelyMoving) 'lastLocationAt': FieldValue.serverTimestamp(),
           'serverTime': FieldValue.serverTimestamp(),
           'lastTrackingAt': FieldValue.serverTimestamp(),
           'trackingStatus': trackingStatus,
@@ -191,7 +194,7 @@ class LocationTaskHandler extends TaskHandler {
       }
 
       FlutterForegroundTask.sendDataToMain({
-        'trackingStatus': 'idle',
+        'trackingStatus': isLikelyMoving ? 'sending' : 'idle',
         'speed': speedKmh,
         'at': now.toIso8601String(),
       });

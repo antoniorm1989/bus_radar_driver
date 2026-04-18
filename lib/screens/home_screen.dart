@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import '../services/session_provider.dart';
 import '../widgets/status_indicator.dart';
-import '../services/auth_service.dart';
 import 'package:geolocator/geolocator.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -17,6 +17,8 @@ class HomeScreen extends StatelessWidget {
     final route = sessionProvider.route;
     final canToggleService =
         driver != null && bus != null && route != null;
+    final hasPermissionIssue =
+      sessionProvider.trackingStatus == 'permission_required';
 
     Future<void> handleServiceToggle() async {
       if (!canToggleService) {
@@ -75,19 +77,6 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Bus Radar Driver')),
-      drawer: _OperationsDrawer(
-        driverName: driver?.name,
-        busId: bus?.displayName,
-        routeName: route?.name,
-        isServiceActive: sessionProvider.isActive,
-        onSignOut: () async {
-          Navigator.pop(context);
-          await sessionProvider.stopService();
-          await AuthService().signOut();
-          if (!context.mounted) return;
-          Navigator.pushReplacementNamed(context, '/');
-        },
-      ),
       body: sessionProvider.isLoading
           ? const Center(child: CircularProgressIndicator())
           : LayoutBuilder(
@@ -131,12 +120,20 @@ class HomeScreen extends StatelessWidget {
                             lastSentAt: sessionProvider.lastSentAt,
                             lastTrackingAt: sessionProvider.lastTrackingAt,
                           ),
-                          if (sessionProvider.gpsError || sessionProvider.connectionError) ...[
+                          if (sessionProvider.gpsError ||
+                              sessionProvider.connectionError ||
+                              hasPermissionIssue) ...[
                             const SizedBox(height: 10),
                             Wrap(
                               spacing: 10,
                               runSpacing: 10,
                               children: [
+                                if (hasPermissionIssue)
+                                  OutlinedButton.icon(
+                                    onPressed: () => Geolocator.openAppSettings(),
+                                    icon: const Icon(Icons.settings_rounded),
+                                    label: const Text('Permisos de ubicacion'),
+                                  ),
                                 if (sessionProvider.gpsError)
                                   OutlinedButton.icon(
                                     onPressed: () => Geolocator.openLocationSettings(),
@@ -303,171 +300,6 @@ class _ProfessionalInfoCardState extends State<_ProfessionalInfoCard> {
   }
 }
 
-class _OperationsDrawer extends StatelessWidget {
-  final String? driverName;
-  final String? busId;
-  final String? routeName;
-  final bool isServiceActive;
-  final Future<void> Function() onSignOut;
-
-  const _OperationsDrawer({
-    required this.driverName,
-    required this.busId,
-    required this.routeName,
-    required this.isServiceActive,
-    required this.onSignOut,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Drawer(
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(22),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primary,
-                  borderRadius: BorderRadius.circular(28),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      driverName ?? 'Usuario',
-                      style: theme.textTheme.titleLarge?.copyWith(color: Colors.white),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Panel asignado a la operación de la unidad.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.82),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        if (busId != null)
-                          _HeaderChip(icon: Icons.directions_bus_rounded, label: 'Unidad $busId'),
-                        if (routeName != null)
-                          _HeaderChip(icon: Icons.alt_route_rounded, label: routeName!),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.logout_rounded),
-                label: const Text('Cerrar sesión'),
-                onPressed: onSignOut,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HeaderChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const _HeaderChip({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: Colors.white),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DrawerDetailTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
-
-  const _DrawerDetailTile({
-    required this.icon,
-    required this.title,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F9FC),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: theme.colorScheme.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF6A7587),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: theme.textTheme.bodyLarge?.copyWith(fontSize: 16),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ControlPanel extends StatelessWidget {
   final bool isActive;
   final bool enabled;
@@ -485,48 +317,66 @@ class _ControlPanel extends StatelessWidget {
     final buttonColor = isActive ? const Color(0xFF67BA6A) : theme.colorScheme.primary;
     final labelColor = isActive ? const Color(0xFF2F8F46) : const Color(0xFF64748B);
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onTap: onPressed,
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 220),
-            opacity: enabled ? 1 : 0.55,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 240),
-              width: 190,
-              height: 190,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: buttonColor,
-                boxShadow: [
-                  BoxShadow(
-                    color: buttonColor.withValues(alpha: 0.25),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableHeight =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 260.0;
+        final availableWidth =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 260.0;
+
+        final diameterByHeight =
+            (availableHeight - 46).clamp(92.0, 190.0).toDouble();
+        final diameterByWidth =
+            (availableWidth - 16).clamp(92.0, 190.0).toDouble();
+        final diameter = math.min(diameterByHeight, diameterByWidth);
+        final iconSize = (diameter * 0.48).clamp(44.0, 92.0).toDouble();
+        final verticalGap = diameter < 145 ? 6.0 : 12.0;
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: onPressed,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 220),
+                opacity: enabled ? 1 : 0.55,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 240),
+                  width: diameter,
+                  height: diameter,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: buttonColor,
+                    boxShadow: [
+                      BoxShadow(
+                        color: buttonColor.withValues(alpha: 0.25),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              child: const Center(
-                child: Icon(
-                  Icons.power_settings_new_rounded,
-                  size: 92,
-                  color: Colors.white,
+                  child: Center(
+                    child: Icon(
+                      Icons.power_settings_new_rounded,
+                      size: iconSize,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          isActive ? 'Servicio encendido' : 'Servicio apagado',
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: labelColor,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
+            SizedBox(height: verticalGap),
+            Text(
+              isActive ? 'Servicio encendido' : 'Servicio apagado',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: labelColor,
+                fontWeight: FontWeight.w700,
+                fontSize: diameter < 145 ? 16 : null,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

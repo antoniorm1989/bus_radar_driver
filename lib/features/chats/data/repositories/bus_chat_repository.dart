@@ -115,6 +115,7 @@ class BusChatRepository {
 
     final identity = await getCurrentIdentity();
 
+    // Driver chat never computes or writes isOnBoard; passenger app owns that snapshot.
     await _messagesCollection(busId).add({
       'text': safeText,
       'createdAt': FieldValue.serverTimestamp(),

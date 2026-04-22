@@ -55,6 +55,24 @@ class _DriverBusChatScreenState extends State<DriverBusChatScreen> {
     }
   }
 
+  void _appendEmoji(String emoji) {
+    final value = _messageController.value;
+    final selection = value.selection;
+
+    final start = selection.start >= 0 ? selection.start : value.text.length;
+    final end = selection.end >= 0 ? selection.end : value.text.length;
+
+    final updatedText = value.text.replaceRange(start, end, emoji);
+    final caretOffset = start + emoji.length;
+
+    _messageController.value = TextEditingValue(
+      text: updatedText,
+      selection: TextSelection.collapsed(offset: caretOffset),
+    );
+
+    _composerFocusNode.requestFocus();
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<ChatUserIdentity>(
@@ -70,13 +88,21 @@ class _DriverBusChatScreenState extends State<DriverBusChatScreen> {
           appBar: AppBar(
             backgroundColor: const Color(0xFF0B1A34),
             foregroundColor: Colors.white,
-            titleSpacing: 0,
+            centerTitle: false,
+            titleSpacing: 12,
             title: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Chat de Ruta'),
+                Text(
+                  widget.busLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 Text(
                   _buildHeaderSubtitle(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 12,
@@ -85,6 +111,16 @@ class _DriverBusChatScreenState extends State<DriverBusChatScreen> {
                 ),
               ],
             ),
+            actions: [
+              StreamBuilder<List<BusChatMessage>>(
+                stream: _repository.watchRecentMessages(widget.busId),
+                builder: (context, snapshot) {
+                  final count = snapshot.data?.length ?? 0;
+                  return _ChatContextBadge(messageCount: count);
+                },
+              ),
+              const SizedBox(width: 8),
+            ],
           ),
           backgroundColor: const Color(0xFFF3F6FB),
           body: SafeArea(
@@ -105,7 +141,12 @@ class _DriverBusChatScreenState extends State<DriverBusChatScreen> {
 
                     return _PinnedMessagesPanel(
                       messages: pinnedMessages,
-                      canUnpin: canPin,
+                      canUnpinMessage: (message) {
+                        if (!canPin || currentUserId == null) {
+                          return false;
+                        }
+                        return message.userId == currentUserId;
+                      },
                       pinningMessageId: _pinningMessageId,
                       isExpanded: _isPinnedPanelExpanded,
                       onToggleExpanded: () {
@@ -147,7 +188,7 @@ class _DriverBusChatScreenState extends State<DriverBusChatScreen> {
                             message: message,
                             isMine: isMine,
                             isPinning: _pinningMessageId == message.id,
-                            onLongPress: canPin
+                            onLongPress: canPin && isMine
                                 ? () => _showMessageActions(
                                     message,
                                     canPin: canPin,
@@ -159,6 +200,7 @@ class _DriverBusChatScreenState extends State<DriverBusChatScreen> {
                     },
                   ),
                 ),
+                _QuickEmojiBar(onEmojiTap: _appendEmoji),
                 _Composer(
                   controller: _messageController,
                   focusNode: _composerFocusNode,
@@ -177,9 +219,9 @@ class _DriverBusChatScreenState extends State<DriverBusChatScreen> {
   String _buildHeaderSubtitle() {
     final route = (widget.routeName ?? '').trim();
     if (route.isEmpty) {
-      return widget.busLabel;
+      return 'Ruta sin nombre';
     }
-    return '${widget.busLabel} / $route';
+    return route;
   }
 
   Future<void> _showMessageActions(
@@ -290,7 +332,7 @@ enum _MessageAction { togglePin }
 class _PinnedMessagesPanel extends StatelessWidget {
   const _PinnedMessagesPanel({
     required this.messages,
-    required this.canUnpin,
+    required this.canUnpinMessage,
     required this.pinningMessageId,
     required this.isExpanded,
     required this.onToggleExpanded,
@@ -298,7 +340,7 @@ class _PinnedMessagesPanel extends StatelessWidget {
   });
 
   final List<BusChatMessage> messages;
-  final bool canUnpin;
+  final bool Function(BusChatMessage message) canUnpinMessage;
   final String? pinningMessageId;
   final bool isExpanded;
   final VoidCallback onToggleExpanded;
@@ -335,7 +377,7 @@ class _PinnedMessagesPanel extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Mensajes fijados (${messages.length})',
+                      'Mensajes pineados (${messages.length})',
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
@@ -356,7 +398,7 @@ class _PinnedMessagesPanel extends StatelessWidget {
           for (final message in visibleMessages)
             _PinnedMessageTile(
               message: message,
-              canUnpin: canUnpin,
+              canUnpin: canUnpinMessage(message),
               isBusy: pinningMessageId == message.id,
               onUnpin: () => onUnpin(message),
             ),
@@ -389,52 +431,85 @@ class _PinnedMessageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final visual = _bubbleStyle(message, false);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _senderTitle(message),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF0E4D7A),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  message.text,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF173A5E),
-                    height: 1.25,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (canUnpin)
-            IconButton(
-              iconSize: 20,
-              tooltip: 'Desfijar',
-              onPressed: isBusy ? null : onUnpin,
-              icon: isBusy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(
-                      Icons.close_rounded,
-                      color: Color(0xFF0E4D7A),
+      child: Container(
+        decoration: BoxDecoration(
+          color: visual.background,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: visual.border, width: visual.borderWidth),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 9, 8, 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SenderGlyph(
+                message: message,
+                isMine: false,
+                compact: true,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _senderTitle(message),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: visual.headerColor,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (_shouldShowOnBoardPill(message)) ...[
+                          const SizedBox(width: 6),
+                          const _OnBoardPill(),
+                        ],
+                      ],
                     ),
-            ),
-        ],
+                    const SizedBox(height: 2),
+                    Text(
+                      message.text,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: visual.textColor,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (canUnpin)
+                IconButton(
+                  iconSize: 20,
+                  tooltip: 'Desfijar',
+                  onPressed: isBusy ? null : onUnpin,
+                  icon: isBusy
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: visual.headerColor,
+                          ),
+                        )
+                      : Icon(
+                          Icons.close_rounded,
+                          color: visual.headerColor,
+                        ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -521,83 +596,96 @@ class _MessageBubble extends StatelessWidget {
         alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 340),
-          child: GestureDetector(
-            onLongPress: onLongPress,
-            child: Container(
-              decoration: BoxDecoration(
-                color: visual.background,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: visual.border, width: visual.borderWidth),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _roleIcon(message.role, message.isAnonymous),
-                          size: 16,
-                          color: visual.headerColor,
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            _senderTitle(message),
-                            style: TextStyle(
-                              color: visual.headerColor,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (message.isPinned) ...[
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.push_pin_rounded,
-                            size: 14,
-                            color: visual.headerColor,
-                          ),
-                        ],
-                        if (isPinning) ...[
-                          const SizedBox(width: 6),
-                          SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.8,
-                              color: visual.headerColor,
-                            ),
-                          ),
-                        ],
-                      ],
+          child: IntrinsicWidth(
+            child: GestureDetector(
+              onLongPress: onLongPress,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: visual.background,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: visual.border, width: visual.borderWidth),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      message.text,
-                      style: TextStyle(
-                        color: visual.textColor,
-                        fontSize: 15,
-                        height: 1.3,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _SenderGlyph(
+                                message: message,
+                                isMine: isMine,
+                                compact: false,
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _senderTitle(message),
+                                  style: TextStyle(
+                                    color: visual.headerColor,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (_shouldShowOnBoardPill(message)) ...[
+                                const SizedBox(width: 6),
+                                const _OnBoardPill(),
+                              ],
+                              if (message.isPinned) ...[
+                                const SizedBox(width: 6),
+                                Icon(
+                                  Icons.push_pin_rounded,
+                                  size: 14,
+                                  color: visual.headerColor,
+                                ),
+                              ],
+                              if (isPinning) ...[
+                                const SizedBox(width: 6),
+                                SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.8,
+                                    color: visual.headerColor,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            message.text,
+                            style: TextStyle(
+                              color: visual.textColor,
+                              fontSize: 15,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Align(
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
+                    child: Align(
                       alignment: Alignment.centerRight,
                       child: Text(
                         _formatMessageTime(message.createdAt),
-                        style: TextStyle(
-                          color: visual.headerColor.withValues(alpha: 0.9),
+                        style: const TextStyle(
+                          color: Color(0xFF5F7084),
                           fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -659,7 +747,7 @@ class _Composer extends StatelessWidget {
               decoration: InputDecoration(
                 counterText: '',
                 hintText: isEnabled
-                    ? 'Escribe un mensaje para pasajeros y admin...'
+                    ? 'Escribe un mensaje...'
                     : 'Esperando identidad de chat...',
               ),
               onSubmitted: (_) {
@@ -731,6 +819,113 @@ class _ChatErrorBanner extends StatelessWidget {
   }
 }
 
+class _ChatContextBadge extends StatelessWidget {
+  const _ChatContextBadge({required this.messageCount});
+
+  final int messageCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF274566),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            '$messageCount',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickEmojiBar extends StatelessWidget {
+  const _QuickEmojiBar({required this.onEmojiTap});
+
+  final ValueChanged<String> onEmojiTap;
+
+  static const _quickEmojis = ['🙂', '😅', '🚌', '🧊', '❄️', '🙌', '👍', '🙏'];
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 42,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+        scrollDirection: Axis.horizontal,
+        itemBuilder: (_, index) {
+          final emoji = _quickEmojis[index];
+          return InkWell(
+            onTap: () => onEmojiTap(emoji),
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFFD7DFEA)),
+                borderRadius: BorderRadius.circular(999),
+                color: Colors.white,
+              ),
+              child: Text(emoji, style: const TextStyle(fontSize: 22)),
+            ),
+          );
+        },
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemCount: _quickEmojis.length,
+      ),
+    );
+  }
+}
+
+class _SenderGlyph extends StatelessWidget {
+  const _SenderGlyph({
+    required this.message,
+    required this.isMine,
+    required this.compact,
+  });
+
+  final BusChatMessage message;
+  final bool isMine;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = _roleIcon(message);
+    final size = compact ? 21.0 : 28.0;
+    final backgroundColor = isMine ? Colors.white : const Color(0xFF0D5D97);
+    final iconColor = isMine ? const Color(0xFF0D5D97) : Colors.white;
+
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        icon,
+        size: compact ? 13 : 16,
+        color: iconColor,
+      ),
+    );
+  }
+}
+
 _StringBubbleStyle _bubbleStyle(BusChatMessage message, bool isMine) {
   if (isMine) {
     return const _StringBubbleStyle(
@@ -742,59 +937,80 @@ _StringBubbleStyle _bubbleStyle(BusChatMessage message, bool isMine) {
     );
   }
 
-  switch (message.role) {
-    case BusChatRole.driver:
-      return const _StringBubbleStyle(
-        background: Colors.white,
-        border: Color(0xFF176D3F),
-        borderWidth: 1.8,
-        textColor: Color(0xFF0E4D7A),
-        headerColor: Color(0xFF176D3F),
-      );
-    case BusChatRole.admin:
-      return const _StringBubbleStyle(
-        background: Colors.white,
-        border: Color(0xFF0D5D97),
-        borderWidth: 1.8,
-        textColor: Color(0xFF0E4D7A),
-        headerColor: Color(0xFF0D5D97),
-      );
-    case BusChatRole.user:
-      return const _StringBubbleStyle(
-        background: Colors.white,
-        border: Color(0xFF2F7DB7),
-        borderWidth: 1.1,
-        textColor: Color(0xFF0E4D7A),
-        headerColor: Color(0xFF0B4A75),
-      );
+  if (message.role == BusChatRole.admin) {
+    return const _StringBubbleStyle(
+      background: Colors.white,
+      border: Color(0xFF0D5D97),
+      borderWidth: 2.0,
+      textColor: Color(0xFF0E4D7A),
+      headerColor: Color(0xFF0D5D97),
+    );
   }
+
+  return const _StringBubbleStyle(
+    background: Colors.white,
+    border: Color(0xFF2F7DB7),
+    borderWidth: 1.1,
+    textColor: Color(0xFF0E4D7A),
+    headerColor: Color(0xFF0B4A75),
+  );
 }
 
 String _senderTitle(BusChatMessage message) {
-  if (message.role == BusChatRole.user && message.isAnonymous) {
+  if (message.isAnonymous) {
     return message.displayName;
   }
 
-  final roleLabel = switch (message.role) {
-    BusChatRole.driver => 'Chofer',
-    BusChatRole.admin => 'Admin',
-    BusChatRole.user => 'Pasajero',
-  };
-
-  return '${_ChatIdentityFormatter.shortProfileName(message.displayName)} / $roleLabel';
+  return _ChatIdentityFormatter.shortProfileName(message.displayName);
 }
 
-IconData _roleIcon(BusChatRole role, bool isAnonymous) {
-  if (role == BusChatRole.driver) {
-    return Icons.directions_bus_rounded;
-  }
-  if (role == BusChatRole.admin) {
+IconData _roleIcon(BusChatMessage message) {
+  if (message.role == BusChatRole.admin) {
     return Icons.admin_panel_settings_rounded;
   }
-  if (isAnonymous) {
+  if (message.role == BusChatRole.driver) {
+    return Icons.directions_bus_rounded;
+  }
+  if (message.isAnonymous) {
     return Icons.visibility_off_rounded;
   }
   return Icons.person_rounded;
+}
+
+bool _shouldShowOnBoardPill(BusChatMessage message) {
+  // Read-only display: this value is produced by passenger app at send time.
+  return message.role == BusChatRole.user && message.isOnBoard == true;
+}
+
+class _OnBoardPill extends StatelessWidget {
+  const _OnBoardPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 3, 10, 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFF066B57),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF20D39A), width: 1),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, size: 8, color: Color(0xFF20D39A)),
+          SizedBox(width: 5),
+          Text(
+            'A bordo',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _StringBubbleStyle {

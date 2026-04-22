@@ -12,6 +12,7 @@ class BusChatMessage {
   final String displayName;
   final BusChatRole role;
   final bool isAnonymous;
+  final bool? isOnBoard;
   final bool isPinned;
   final String pinnedByUserId;
   final BusChatRole? pinnedByRole;
@@ -26,6 +27,7 @@ class BusChatMessage {
     required this.displayName,
     required this.role,
     required this.isAnonymous,
+    required this.isOnBoard,
     required this.isPinned,
     required this.pinnedByUserId,
     required this.pinnedByRole,
@@ -39,21 +41,35 @@ class BusChatMessage {
     final createdAtRaw = data['createdAt'];
     final expiresAtRaw = data['expiresAt'];
     final pinnedAtRaw = data['pinnedAt'];
+    final createdAt = createdAtRaw is Timestamp ? createdAtRaw.toDate() : null;
+    final userId = (data['userId'] as String? ?? '').trim();
+    final role = BusChatRole.fromDynamic(data['role']);
     final safeDisplayName = _safeDisplayName(data['displayName'] as String?);
     final isAnonymousFromData = data['isAnonymous'] == true;
     final inferredAnonymous = safeDisplayName.toLowerCase().startsWith('anon-');
+    final isAnonymous = isAnonymousFromData || inferredAnonymous;
+    final anonymousSourceId = userId.isNotEmpty ? userId : doc.id;
+    final rawIsOnBoard = data['isOnBoard'];
     final rawPinnedByRole = data['pinnedByRole'];
 
     return BusChatMessage(
       id: doc.id,
       text: (data['text'] as String? ?? '').trim(),
-      createdAt: createdAtRaw is Timestamp ? createdAtRaw.toDate() : null,
+      createdAt: createdAt,
       expiresAt: expiresAtRaw is Timestamp ? expiresAtRaw.toDate() : null,
       pinnedAt: pinnedAtRaw is Timestamp ? pinnedAtRaw.toDate() : null,
-      userId: (data['userId'] as String? ?? '').trim(),
-      displayName: safeDisplayName,
-      role: BusChatRole.fromDynamic(data['role']),
-      isAnonymous: isAnonymousFromData || inferredAnonymous,
+      userId: userId,
+      displayName: isAnonymous
+          ? _dailyAnonymousAlias(
+              userId: anonymousSourceId,
+              createdAt: createdAt,
+            )
+          : safeDisplayName,
+      role: role,
+      isAnonymous: isAnonymous,
+      isOnBoard: role == BusChatRole.user && rawIsOnBoard is bool
+          ? rawIsOnBoard
+          : null,
       isPinned: data['isPinned'] == true,
       pinnedByUserId: (data['pinnedByUserId'] as String? ?? '').trim(),
       pinnedByRole:
@@ -61,6 +77,26 @@ class BusChatMessage {
           ? BusChatRole.fromDynamic(rawPinnedByRole)
           : null,
     );
+  }
+
+  static String _dailyAnonymousAlias({
+    required String userId,
+    required DateTime? createdAt,
+  }) {
+    final sourceDate = (createdAt ?? DateTime.now()).toLocal();
+    final yyyy = sourceDate.year.toString().padLeft(4, '0');
+    final mm = sourceDate.month.toString().padLeft(2, '0');
+    final dd = sourceDate.day.toString().padLeft(2, '0');
+    final seed = '$userId|$yyyy-$mm-$dd';
+
+    var hash = 0;
+    for (final code in seed.codeUnits) {
+      hash = ((hash * 33) ^ code) & 0x7fffffff;
+    }
+
+    final token = hash.toRadixString(36).toUpperCase().padLeft(7, '0');
+    final shortToken = token.length > 7 ? token.substring(token.length - 7) : token;
+    return 'Anon-$shortToken';
   }
 
   static String _safeDisplayName(String? rawDisplayName) {

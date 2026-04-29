@@ -43,6 +43,11 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isAssignedDriver(request.resource.data);
       allow update, delete: if isAssignedDriver(resource.data);
+
+      match /tiemposRuta/{runId} {
+        allow read: if isSignedIn() && (isAdminRole() || isAssignedDriverForBus(busId));
+        allow create, update, delete: if isSignedIn() && (isAdminRole() || isAssignedDriverForBus(busId));
+      }
     }
 
     match /busChats/{busId} {

@@ -15,6 +15,8 @@ import '../models/route.dart';
 import 'driver_service.dart';
 import 'foreground_service.dart';
 
+const int _kMinRouteRunSeconds = 5 * 60;
+
 class SessionProvider extends ChangeNotifier {
   SessionProvider() {
     FlutterForegroundTask.addTaskDataCallback(_onForegroundTaskData);
@@ -42,6 +44,8 @@ class SessionProvider extends ChangeNotifier {
   String? trackingMessage;
   DateTime? lastSentAt;
   DateTime? lastTrackingAt;
+  DateTime? currentRouteStartedAt;
+  List<RouteTimeEntry> routeTimesToday = const [];
 
   Timer? _trackingHealthTimer;
   StreamSubscription<DocumentSnapshot>? _busListener;
@@ -94,6 +98,7 @@ class SessionProvider extends ChangeNotifier {
 
       _initConnectivityListener();
       _listenBusRealtime();
+      await _refreshRouteTimesToday(notify: false);
 
       isActive = bus?.active ?? false;
       if (isActive) {
@@ -171,6 +176,9 @@ class SessionProvider extends ChangeNotifier {
         throw result.error;
       }
 
+      await _openRouteRun();
+      await _refreshRouteTimesToday(notify: false);
+
       isActive = true;
       trackingStatus = 'starting';
       trackingMessage = 'Rastreo activo';
@@ -209,6 +217,9 @@ class SessionProvider extends ChangeNotifier {
         'trackingMessage': 'Servicio detenido',
         'trackingUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      await _closeRouteRun();
+      await _refreshRouteTimesToday(notify: false);
 
       isActive = false;
       isSendingLocation = false;
@@ -271,6 +282,15 @@ class SessionProvider extends ChangeNotifier {
         lastTrackingAt = parsedLastTrackingAt;
       }
 
+      final rawLastStartedAt = data['lastStartedAt'];
+      final parsedLastStartedAt = _parseTimestamp(rawLastStartedAt);
+      if (isActive && currentRouteStartedAt == null && parsedLastStartedAt != null) {
+        currentRouteStartedAt = parsedLastStartedAt;
+      }
+      if (!isActive) {
+        currentRouteStartedAt = null;
+      }
+
       final statusRaw = data['trackingStatus'];
       if (statusRaw is String && statusRaw.isNotEmpty) {
         trackingStatus = statusRaw;
@@ -296,6 +316,174 @@ class SessionProvider extends ChangeNotifier {
       return raw;
     }
     return null;
+  }
+
+  CollectionReference<Map<String, dynamic>>? _routeTimesCollection() {
+    final activeBus = bus;
+    if (activeBus == null) {
+      return null;
+    }
+
+    return FirebaseFirestore.instance
+        .collection('buses')
+        .doc(activeBus.id)
+        .collection('tiemposRuta');
+  }
+
+  String _dayKey(DateTime dateTime) {
+    final local = dateTime.toLocal();
+    final yyyy = local.year.toString().padLeft(4, '0');
+    final mm = local.month.toString().padLeft(2, '0');
+    final dd = local.day.toString().padLeft(2, '0');
+    return '$yyyy-$mm-$dd';
+  }
+
+  Future<void> _refreshRouteTimesToday({bool notify = true}) async {
+    final collection = _routeTimesCollection();
+    if (collection == null) {
+      routeTimesToday = const [];
+      currentRouteStartedAt = null;
+      if (notify) {
+        notifyListeners();
+      }
+      return;
+    }
+
+    try {
+      final snapshot = await collection
+          .orderBy('startedAt', descending: false)
+          .limit(120)
+          .get();
+
+      final todayKey = _dayKey(DateTime.now());
+      final parsed = <RouteTimeEntry>[];
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+
+        final startedAt = _parseTimestamp(data['startedAt']) ??
+            _parseTimestamp(data['startedAtClient']);
+        if (startedAt == null) {
+          continue;
+        }
+
+        final endedAt = _parseTimestamp(data['endedAt']) ??
+            _parseTimestamp(data['endedAtClient']);
+        if (endedAt == null) {
+          // In the current model we only keep closed runs in history.
+          continue;
+        }
+
+        final storedDayKey = (data['dayKey'] as String? ?? '').trim();
+        final belongsToToday =
+            storedDayKey == todayKey || _dayKey(startedAt) == todayKey;
+
+        if (!belongsToToday) {
+          continue;
+        }
+
+        final durationRaw = data['durationSec'];
+        final resolvedDurationSec = durationRaw is num
+            ? durationRaw.toInt()
+            : (endedAt == null
+                  ? null
+                  : endedAt
+                        .difference(startedAt)
+                        .inSeconds
+                        .clamp(0, 60 * 60 * 24 * 7)
+                        .toInt());
+
+        if (endedAt != null && (resolvedDurationSec == null || resolvedDurationSec < _kMinRouteRunSeconds)) {
+          continue;
+        }
+
+        parsed.add(
+          RouteTimeEntry(
+            id: doc.id,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            durationSec: resolvedDurationSec,
+          ),
+        );
+      }
+
+      parsed.sort((a, b) => a.startedAt.compareTo(b.startedAt));
+      routeTimesToday = parsed;
+    } catch (e, st) {
+      _logger.w('[routeTimes] No se pudo cargar historial diario: $e\n$st');
+    }
+
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _openRouteRun() async {
+    // Keep start time only in memory; persist run history on stop if duration >= threshold.
+    currentRouteStartedAt = DateTime.now();
+  }
+
+  Future<void> _closeRouteRun() async {
+    final collection = _routeTimesCollection();
+    final activeDriver = driver;
+    final activeRoute = route;
+    final activeBus = bus;
+
+    if (collection == null || activeDriver == null || activeRoute == null || activeBus == null) {
+      currentRouteStartedAt = null;
+      return;
+    }
+
+    final endedAtClient = DateTime.now();
+    DateTime? startedAt = currentRouteStartedAt;
+
+    if (startedAt == null && activeBus.id.isNotEmpty) {
+      try {
+        final busSnapshot = await FirebaseFirestore.instance
+            .collection('buses')
+            .doc(activeBus.id)
+            .get();
+        final busData = busSnapshot.data();
+        if (busData != null) {
+          startedAt = _parseTimestamp(busData['lastStartedAt']);
+        }
+      } catch (e, st) {
+        _logger.w('[routeTimes] No se pudo recuperar inicio de ruta: $e\n$st');
+      }
+    }
+
+    if (startedAt == null) {
+      currentRouteStartedAt = null;
+      return;
+    }
+
+    try {
+      final computedSeconds = endedAtClient
+          .difference(startedAt)
+          .inSeconds
+          .clamp(0, 60 * 60 * 24 * 7)
+          .toInt();
+
+      if (computedSeconds >= _kMinRouteRunSeconds) {
+        await collection.add({
+          'busId': activeBus.id,
+          'driverId': activeDriver.id,
+          'driverName': activeDriver.name,
+          'routeId': activeRoute.id,
+          'routeName': activeRoute.name,
+          'dayKey': _dayKey(startedAt),
+          'startedAt': Timestamp.fromDate(startedAt.toUtc()),
+          'endedAt': FieldValue.serverTimestamp(),
+          'endedAtClient': Timestamp.fromDate(endedAtClient.toUtc()),
+          'durationSec': computedSeconds,
+          'status': 'closed',
+        });
+      }
+    } catch (e, st) {
+      _logger.w('[routeTimes] No se pudo cerrar trayecto: $e\n$st');
+    } finally {
+      currentRouteStartedAt = null;
+    }
   }
 
   Future<bool> _ensureTrackingPrerequisites() async {
@@ -497,4 +685,18 @@ class SessionProvider extends ChangeNotifier {
     _busListener?.cancel();
     super.dispose();
   }
+}
+
+class RouteTimeEntry {
+  const RouteTimeEntry({
+    required this.id,
+    required this.startedAt,
+    required this.endedAt,
+    required this.durationSec,
+  });
+
+  final String id;
+  final DateTime startedAt;
+  final DateTime? endedAt;
+  final int? durationSec;
 }

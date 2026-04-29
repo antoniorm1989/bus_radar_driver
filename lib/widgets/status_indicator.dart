@@ -166,10 +166,10 @@ class _StatusIndicatorState extends State<StatusIndicator>
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
         color: const Color(0xFFF2F4F7),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFD1D5DB)),
       ),
       child: Column(
@@ -178,8 +178,8 @@ class _StatusIndicatorState extends State<StatusIndicator>
           Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
@@ -187,17 +187,17 @@ class _StatusIndicatorState extends State<StatusIndicator>
                 ),
                 child: Icon(
                   _isSending ? Icons.wifi_tethering_rounded : Icons.pause_circle_filled,
-                  size: 22,
+                  size: 19,
                   color: const Color(0xFF546E7A),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 9),
               Expanded(
                 child: Text(
                   indicator.title,
                   style: theme.textTheme.titleMedium?.copyWith(
                     color: const Color(0xFF334155),
-                    fontSize: 16,
+                    fontSize: 15,
                   ),
                 ),
               ),
@@ -223,12 +223,15 @@ class _StatusIndicatorState extends State<StatusIndicator>
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 7),
           Text(
             indicator.subtitle,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: const Color(0xFF475569),
+              fontSize: 14,
             ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),

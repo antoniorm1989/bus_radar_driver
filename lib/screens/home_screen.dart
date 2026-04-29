@@ -85,7 +85,7 @@ class HomeScreen extends StatelessWidget {
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 560),
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -99,12 +99,15 @@ class HomeScreen extends StatelessWidget {
                             driverName: driver?.name,
                             busId: bus?.displayName,
                             routeName: route?.name,
+                            todayRouteTimes: sessionProvider.routeTimesToday,
                           ),
                           Expanded(
                             child: Center(
                               child: _ControlPanel(
                                 isActive: sessionProvider.isActive,
                                 enabled: canToggleService,
+                                currentRouteStartedAt:
+                                    sessionProvider.currentRouteStartedAt,
                                 onPressed: handleServiceToggle,
                               ),
                             ),
@@ -166,133 +169,214 @@ class _ProfessionalInfoCard extends StatefulWidget {
   final String? driverName;
   final String? busId;
   final String? routeName;
+  final List<RouteTimeEntry> todayRouteTimes;
+
   const _ProfessionalInfoCard({
     required this.isActive,
     required this.speed,
     required this.driverName,
     required this.busId,
     required this.routeName,
+    required this.todayRouteTimes,
   });
+
   @override
   State<_ProfessionalInfoCard> createState() => _ProfessionalInfoCardState();
 }
 
 class _ProfessionalInfoCardState extends State<_ProfessionalInfoCard> {
-  late DateTime _now;
-  Timer? _timer;
-  DateTime? _serviceStart;
-
-  @override
-  void initState() {
-    super.initState();
-    _now = DateTime.now();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() {
-        _now = DateTime.now();
-      });
-    });
-    if (widget.isActive) {
-      _serviceStart = DateTime.now();
-    }
+  String _formatClock(DateTime value) {
+    final local = value.toLocal();
+    final hh = local.hour.toString().padLeft(2, '0');
+    final mm = local.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
   }
 
-  @override
-  void didUpdateWidget(covariant _ProfessionalInfoCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.isActive && !oldWidget.isActive) {
-      _serviceStart = DateTime.now();
+  String _formatCompactDuration(Duration duration) {
+    final safe = duration.isNegative ? Duration.zero : duration;
+    final totalMinutes = safe.inMinutes;
+
+    if (totalMinutes < 60) {
+      return '${totalMinutes}m';
     }
-    if (!widget.isActive && oldWidget.isActive) {
-      _serviceStart = null;
+
+    final totalHours = totalMinutes ~/ 60;
+    final remainingMinutes = totalMinutes % 60;
+    if (totalHours < 24) {
+      if (remainingMinutes == 0) {
+        return '${totalHours}h';
+      }
+      return '${totalHours}h ${remainingMinutes}m';
     }
+
+    final days = totalHours ~/ 24;
+    final remainingHours = totalHours % 24;
+    if (remainingHours == 0) {
+      return '${days}d';
+    }
+    return '${days}d ${remainingHours}h';
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
+  String _historyDurationLabel(RouteTimeEntry run) {
+    final storedSeconds = run.durationSec;
+    if (storedSeconds != null) {
+      return _formatCompactDuration(Duration(seconds: storedSeconds));
+    }
 
-  String _formatDuration(Duration d) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final h = twoDigits(d.inHours);
-    final m = twoDigits(d.inMinutes.remainder(60));
-    final s = twoDigits(d.inSeconds.remainder(60));
-    return '$h:$m:$s';
+    final endedAt = run.endedAt;
+    if (endedAt == null) {
+      return '--';
+    }
+
+    return _formatCompactDuration(endedAt.difference(run.startedAt));
   }
 
   @override
   Widget build(BuildContext context) {
-    final timeStr = '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}';
-    final duration = widget.isActive && _serviceStart != null ? _now.difference(_serviceStart!) : null;
     final theme = Theme.of(context);
+    final speedLabel = widget.speed != null
+        ? '${widget.speed!.toStringAsFixed(1)} km/h'
+        : '-- km/h';
+
+    final completedRuns = widget.todayRouteTimes
+        .where((run) => run.endedAt != null)
+        .toList(growable: false);
+    final visibleRuns = completedRuns.length > 4
+      ? completedRuns.sublist(completedRuns.length - 4)
+        : completedRuns;
 
     return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: Color(0xFFE3E8EF)),
+      ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 24),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 2),
             if (widget.driverName != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _ClassicInfoLine(
-                  icon: Icons.person,
-                  value: widget.driverName!,
-                  strong: false,
-                ),
+              _PremiumInfoLine(
+                icon: Icons.person_rounded,
+                label: 'Chofer',
+                value: widget.driverName!,
               ),
             if (widget.busId != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _ClassicInfoLine(
-                  icon: Icons.directions_bus,
-                  value: 'Camión: ${widget.busId!}',
-                ),
+              _PremiumInfoLine(
+                icon: Icons.directions_bus_rounded,
+                label: 'Unidad',
+                value: widget.busId!,
               ),
             if (widget.routeName != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 18),
-                child: _ClassicInfoLine(
-                  icon: Icons.alt_route,
-                  value: 'Ruta: ${widget.routeName!}',
-                ),
+              _PremiumInfoLine(
+                icon: Icons.alt_route_rounded,
+                label: 'Ruta',
+                value: widget.routeName!,
               ),
-            Center(
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F8FC),
+                borderRadius: BorderRadius.circular(13),
+              ),
               child: Row(
-                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.speed_rounded, color: const Color(0xFF607D8B), size: 36),
-                  const SizedBox(width: 12),
+                  const Icon(
+                    Icons.speed_rounded,
+                    color: Color(0xFF5C7286),
+                    size: 21,
+                  ),
+                  const SizedBox(width: 8),
                   Text(
-                    widget.speed != null ? '${widget.speed!.toStringAsFixed(1)} km/h' : '-- km/h',
-                    style: theme.textTheme.displaySmall?.copyWith(
-                      fontSize: 22,
+                    speedLabel,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontSize: 23,
                       fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1E2F43),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 9),
             Row(
               children: [
-                Expanded(
-                  child: _ClassicMiniMetric(
-                    icon: Icons.access_time_rounded,
-                    value: timeStr,
+                const Icon(
+                  Icons.today_rounded,
+                  size: 16,
+                  color: Color(0xFF4A607A),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  'Hoy',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: const Color(0xFF3B4F67),
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _ClassicMiniMetric(
-                    icon: Icons.timer_outlined,
-                    value: duration != null ? _formatDuration(duration) : '--:--:--',
+                const Spacer(),
+                Text(
+                  '${completedRuns.length} tramos',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF6B7C90),
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 6),
+            if (visibleRuns.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Sin tramos finalizados hoy.',
+                      style: TextStyle(
+                        color: Color(0xFF6E8094),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Solo se registra un tramo si dura mas de 5 min.',
+                      style: TextStyle(
+                        color: Color(0xFF8A99AB),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Column(
+                children: [
+                  for (final run in visibleRuns)
+                    _RouteHistoryRow(
+                      rangeLabel:
+                          '${_formatClock(run.startedAt)} a ${_formatClock(run.endedAt!)}',
+                      durationLabel: _historyDurationLabel(run),
+                    ),
+                  if (completedRuns.length > visibleRuns.length)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '+${completedRuns.length - visibleRuns.length} tramos mas',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF6B7C90),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
           ],
         ),
       ),
@@ -300,46 +384,232 @@ class _ProfessionalInfoCardState extends State<_ProfessionalInfoCard> {
   }
 }
 
-class _ControlPanel extends StatelessWidget {
+class _PremiumInfoLine extends StatelessWidget {
+  const _PremiumInfoLine({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5FB),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, size: 16, color: const Color(0xFF607A92)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: RichText(
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              text: TextSpan(
+                children: [
+                  TextSpan(
+                    text: '$label: ',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF5F7186),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  TextSpan(
+                    text: value,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: const Color(0xFF1F2E41),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RouteHistoryRow extends StatelessWidget {
+  const _RouteHistoryRow({
+    required this.rangeLabel,
+    required this.durationLabel,
+  });
+
+  final String rangeLabel;
+  final String durationLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 5),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAFF),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: const Color(0xFFE1E8F3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              rangeLabel,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF30465F),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Text(
+            durationLabel,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF153D70),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ControlPanel extends StatefulWidget {
   final bool isActive;
   final bool enabled;
+  final DateTime? currentRouteStartedAt;
   final Future<void> Function() onPressed;
 
   const _ControlPanel({
     required this.isActive,
     required this.enabled,
+    required this.currentRouteStartedAt,
     required this.onPressed,
   });
 
   @override
+  State<_ControlPanel> createState() => _ControlPanelState();
+}
+
+class _ControlPanelState extends State<_ControlPanel> {
+  Timer? _ticker;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ControlPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTicker();
+  }
+
+  void _syncTicker() {
+    final shouldTick = widget.isActive && widget.currentRouteStartedAt != null;
+    if (shouldTick) {
+      _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _now = DateTime.now();
+        });
+      });
+      return;
+    }
+
+    _ticker?.cancel();
+    _ticker = null;
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  String? _runningCounterLabel() {
+    final startedAt = widget.currentRouteStartedAt;
+    if (!widget.isActive || startedAt == null) {
+      return null;
+    }
+
+    final diff = _now.difference(startedAt);
+    final safe = diff.isNegative ? Duration.zero : diff;
+
+    final days = safe.inDays;
+    final hours = safe.inHours.remainder(24);
+    final minutes = safe.inMinutes.remainder(60);
+    final seconds = safe.inSeconds.remainder(60);
+
+    final parts = <String>[];
+    if (days > 0) {
+      parts.add('${days}d');
+    }
+    if (hours > 0) {
+      parts.add('${hours}h');
+    }
+    if (minutes > 0) {
+      parts.add('${minutes}m');
+    }
+    if (seconds > 0 || parts.isEmpty) {
+      parts.add('${seconds}s');
+    }
+
+    return parts.join(' ');
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final buttonColor = isActive ? const Color(0xFF67BA6A) : theme.colorScheme.primary;
-    final labelColor = isActive ? const Color(0xFF2F8F46) : const Color(0xFF64748B);
+    final buttonColor =
+        widget.isActive ? const Color(0xFF67BA6A) : theme.colorScheme.primary;
+    final labelColor =
+        widget.isActive ? const Color(0xFF2F8F46) : const Color(0xFF64748B);
+    final runningCounterLabel = _runningCounterLabel();
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final availableHeight =
-            constraints.maxHeight.isFinite ? constraints.maxHeight : 260.0;
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 220.0;
         final availableWidth =
             constraints.maxWidth.isFinite ? constraints.maxWidth : 260.0;
 
         final diameterByHeight =
-            (availableHeight - 46).clamp(92.0, 190.0).toDouble();
+            (availableHeight - 30).clamp(82.0, 160.0).toDouble();
         final diameterByWidth =
-            (availableWidth - 16).clamp(92.0, 190.0).toDouble();
+            (availableWidth - 24).clamp(82.0, 160.0).toDouble();
         final diameter = math.min(diameterByHeight, diameterByWidth);
-        final iconSize = (diameter * 0.48).clamp(44.0, 92.0).toDouble();
-        final verticalGap = diameter < 145 ? 6.0 : 12.0;
+        final iconSize = (diameter * 0.42).clamp(34.0, 74.0).toDouble();
+        final innerRingSize = (diameter * 0.74).clamp(68.0, 122.0).toDouble();
+        final verticalGap = diameter < 130 ? 4.0 : 8.0;
 
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             GestureDetector(
-              onTap: onPressed,
+              onTap: widget.onPressed,
               child: AnimatedOpacity(
                 duration: const Duration(milliseconds: 220),
-                opacity: enabled ? 1 : 0.55,
+                opacity: widget.enabled ? 1 : 0.55,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 240),
                   width: diameter,
@@ -350,28 +620,70 @@ class _ControlPanel extends StatelessWidget {
                     boxShadow: [
                       BoxShadow(
                         color: buttonColor.withValues(alpha: 0.25),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
                       ),
                     ],
                   ),
-                  child: Center(
-                    child: Icon(
-                      Icons.power_settings_new_rounded,
-                      size: iconSize,
-                      color: Colors.white,
-                    ),
-                  ),
+                  child: runningCounterLabel != null
+                      ? Center(
+                          child: Container(
+                            width: innerRingSize,
+                            height: innerRingSize,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.88),
+                                width: 2,
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                    Icons.timer_outlined,
+                                    size: 29,
+                                    color: Colors.white,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  FittedBox(
+                                    child: Text(
+                                      runningCounterLabel,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 15,
+                                      ),
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
+                      : Center(
+                          child: Icon(
+                            Icons.power_settings_new_rounded,
+                            size: iconSize,
+                            color: Colors.white,
+                          ),
+                        ),
                 ),
               ),
             ),
             SizedBox(height: verticalGap),
             Text(
-              isActive ? 'Servicio encendido' : 'Servicio apagado',
+              widget.isActive ? 'Servicio encendido' : 'Servicio apagado',
               style: theme.textTheme.titleMedium?.copyWith(
                 color: labelColor,
                 fontWeight: FontWeight.w700,
-                fontSize: diameter < 145 ? 16 : null,
+                fontSize: diameter < 130 ? 15 : 16,
               ),
             ),
           ],
